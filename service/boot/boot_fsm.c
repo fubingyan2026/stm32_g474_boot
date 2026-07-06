@@ -369,13 +369,13 @@ static fsm_state_t handler_data_transfer(fsm_t* fsm)
         boot_transport_parse_data_end(s_pending_msg, &seq,
             &expected_checksum, &remaining_data, &rem_len);
 
-        /* 累积剩余数据 */
+        /* 累积剩余数据（受 DLC 填充影响，rem_len 可能比实际剩余字节大） */
         if (rem_len > 0U) {
-            if (ctx->block_accumulated_len + rem_len <= BOOT_BLOCK_SIZE) {
-                memcpy(&ctx->ram_block_buffer[ctx->block_accumulated_len],
-                    remaining_data, rem_len);
-                ctx->block_accumulated_len = (uint16_t)(ctx->block_accumulated_len + rem_len);
-            }
+            uint16_t free_space = (uint16_t)(BOOT_BLOCK_SIZE - ctx->block_accumulated_len);
+            uint8_t copy_len = (rem_len < free_space) ? rem_len : (uint8_t)free_space;
+            memcpy(&ctx->ram_block_buffer[ctx->block_accumulated_len],
+                remaining_data, copy_len);
+            ctx->block_accumulated_len = (uint16_t)(ctx->block_accumulated_len + copy_len);
         }
 
         LOG_D(BOOT_TAG, "DATA_END: seq=%u, rem_len=%u, expected_cs=0x%04X",
