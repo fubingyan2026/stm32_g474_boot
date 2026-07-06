@@ -1,0 +1,330 @@
+/**
+  ****************************(C) COPYRIGHT 2019 DJI****************************
+  * @file       crc8_crc16.c/h
+  * @brief      crc8 and crc16 calculate function, verify function, append function.
+  *             crc8和crc16计算函数,校验函数,添加函数
+  * @note       
+  * @history
+  *  Version    Date            Author          Modification
+  *  V1.0.0     Nov-11-2019     RM              1. done
+  *
+  @verbatim
+  ==============================================================================
+
+  ==============================================================================
+  @endverbatim
+  ****************************(C) COPYRIGHT 2019 DJI****************************
+  */
+#include "crc.h"
+#include <stddef.h> 
+
+//crc8 generator polynomial:G(x)=x8+x5+x4+1
+const uint8_t CRC8_INIT = 0xff;
+const uint8_t CRC8_table[256] =
+        {
+                0x00, 0x5e, 0xbc, 0xe2, 0x61, 0x3f, 0xdd, 0x83, 0xc2, 0x9c, 0x7e, 0x20, 0xa3, 0xfd, 0x1f, 0x41,
+                0x9d, 0xc3, 0x21, 0x7f, 0xfc, 0xa2, 0x40, 0x1e, 0x5f, 0x01, 0xe3, 0xbd, 0x3e, 0x60, 0x82, 0xdc,
+                0x23, 0x7d, 0x9f, 0xc1, 0x42, 0x1c, 0xfe, 0xa0, 0xe1, 0xbf, 0x5d, 0x03, 0x80, 0xde, 0x3c, 0x62,
+                0xbe, 0xe0, 0x02, 0x5c, 0xdf, 0x81, 0x63, 0x3d, 0x7c, 0x22, 0xc0, 0x9e, 0x1d, 0x43, 0xa1, 0xff,
+                0x46, 0x18, 0xfa, 0xa4, 0x27, 0x79, 0x9b, 0xc5, 0x84, 0xda, 0x38, 0x66, 0xe5, 0xbb, 0x59, 0x07,
+                0xdb, 0x85, 0x67, 0x39, 0xba, 0xe4, 0x06, 0x58, 0x19, 0x47, 0xa5, 0xfb, 0x78, 0x26, 0xc4, 0x9a,
+                0x65, 0x3b, 0xd9, 0x87, 0x04, 0x5a, 0xb8, 0xe6, 0xa7, 0xf9, 0x1b, 0x45, 0xc6, 0x98, 0x7a, 0x24,
+                0xf8, 0xa6, 0x44, 0x1a, 0x99, 0xc7, 0x25, 0x7b, 0x3a, 0x64, 0x86, 0xd8, 0x5b, 0x05, 0xe7, 0xb9,
+                0x8c, 0xd2, 0x30, 0x6e, 0xed, 0xb3, 0x51, 0x0f, 0x4e, 0x10, 0xf2, 0xac, 0x2f, 0x71, 0x93, 0xcd,
+                0x11, 0x4f, 0xad, 0xf3, 0x70, 0x2e, 0xcc, 0x92, 0xd3, 0x8d, 0x6f, 0x31, 0xb2, 0xec, 0x0e, 0x50,
+                0xaf, 0xf1, 0x13, 0x4d, 0xce, 0x90, 0x72, 0x2c, 0x6d, 0x33, 0xd1, 0x8f, 0x0c, 0x52, 0xb0, 0xee,
+                0x32, 0x6c, 0x8e, 0xd0, 0x53, 0x0d, 0xef, 0xb1, 0xf0, 0xae, 0x4c, 0x12, 0x91, 0xcf, 0x2d, 0x73,
+                0xca, 0x94, 0x76, 0x28, 0xab, 0xf5, 0x17, 0x49, 0x08, 0x56, 0xb4, 0xea, 0x69, 0x37, 0xd5, 0x8b,
+                0x57, 0x09, 0xeb, 0xb5, 0x36, 0x68, 0x8a, 0xd4, 0x95, 0xcb, 0x29, 0x77, 0xf4, 0xaa, 0x48, 0x16,
+                0xe9, 0xb7, 0x55, 0x0b, 0x88, 0xd6, 0x34, 0x6a, 0x2b, 0x75, 0x97, 0xc9, 0x4a, 0x14, 0xf6, 0xa8,
+                0x74, 0x2a, 0xc8, 0x96, 0x15, 0x4b, 0xa9, 0xf7, 0xb6, 0xe8, 0x0a, 0x54, 0xd7, 0x89, 0x6b, 0x35,
+        };
+uint16_t CRC16_INIT = 0xffff;
+const uint16_t wCRC_table[256] =
+        {
+                0x0000, 0x1189, 0x2312, 0x329b, 0x4624, 0x57ad, 0x6536, 0x74bf,
+                0x8c48, 0x9dc1, 0xaf5a, 0xbed3, 0xca6c, 0xdbe5, 0xe97e, 0xf8f7,
+                0x1081, 0x0108, 0x3393, 0x221a, 0x56a5, 0x472c, 0x75b7, 0x643e,
+                0x9cc9, 0x8d40, 0xbfdb, 0xae52, 0xdaed, 0xcb64, 0xf9ff, 0xe876,
+                0x2102, 0x308b, 0x0210, 0x1399, 0x6726, 0x76af, 0x4434, 0x55bd,
+                0xad4a, 0xbcc3, 0x8e58, 0x9fd1, 0xeb6e, 0xfae7, 0xc87c, 0xd9f5,
+                0x3183, 0x200a, 0x1291, 0x0318, 0x77a7, 0x662e, 0x54b5, 0x453c,
+                0xbdcb, 0xac42, 0x9ed9, 0x8f50, 0xfbef, 0xea66, 0xd8fd, 0xc974,
+                0x4204, 0x538d, 0x6116, 0x709f, 0x0420, 0x15a9, 0x2732, 0x36bb,
+                0xce4c, 0xdfc5, 0xed5e, 0xfcd7, 0x8868, 0x99e1, 0xab7a, 0xbaf3,
+                0x5285, 0x430c, 0x7197, 0x601e, 0x14a1, 0x0528, 0x37b3, 0x263a,
+                0xdecd, 0xcf44, 0xfddf, 0xec56, 0x98e9, 0x8960, 0xbbfb, 0xaa72,
+                0x6306, 0x728f, 0x4014, 0x519d, 0x2522, 0x34ab, 0x0630, 0x17b9,
+                0xef4e, 0xfec7, 0xcc5c, 0xddd5, 0xa96a, 0xb8e3, 0x8a78, 0x9bf1,
+                0x7387, 0x620e, 0x5095, 0x411c, 0x35a3, 0x242a, 0x16b1, 0x0738,
+                0xffcf, 0xee46, 0xdcdd, 0xcd54, 0xb9eb, 0xa862, 0x9af9, 0x8b70,
+                0x8408, 0x9581, 0xa71a, 0xb693, 0xc22c, 0xd3a5, 0xe13e, 0xf0b7,
+                0x0840, 0x19c9, 0x2b52, 0x3adb, 0x4e64, 0x5fed, 0x6d76, 0x7cff,
+                0x9489, 0x8500, 0xb79b, 0xa612, 0xd2ad, 0xc324, 0xf1bf, 0xe036,
+                0x18c1, 0x0948, 0x3bd3, 0x2a5a, 0x5ee5, 0x4f6c, 0x7df7, 0x6c7e,
+                0xa50a, 0xb483, 0x8618, 0x9791, 0xe32e, 0xf2a7, 0xc03c, 0xd1b5,
+                0x2942, 0x38cb, 0x0a50, 0x1bd9, 0x6f66, 0x7eef, 0x4c74, 0x5dfd,
+                0xb58b, 0xa402, 0x9699, 0x8710, 0xf3af, 0xe226, 0xd0bd, 0xc134,
+                0x39c3, 0x284a, 0x1ad1, 0x0b58, 0x7fe7, 0x6e6e, 0x5cf5, 0x4d7c,
+                0xc60c, 0xd785, 0xe51e, 0xf497, 0x8028, 0x91a1, 0xa33a, 0xb2b3,
+                0x4a44, 0x5bcd, 0x6956, 0x78df, 0x0c60, 0x1de9, 0x2f72, 0x3efb,
+                0xd68d, 0xc704, 0xf59f, 0xe416, 0x90a9, 0x8120, 0xb3bb, 0xa232,
+                0x5ac5, 0x4b4c, 0x79d7, 0x685e, 0x1ce1, 0x0d68, 0x3ff3, 0x2e7a,
+                0xe70e, 0xf687, 0xc41c, 0xd595, 0xa12a, 0xb0a3, 0x8238, 0x93b1,
+                0x6b46, 0x7acf, 0x4854, 0x59dd, 0x2d62, 0x3ceb, 0x0e70, 0x1ff9,
+                0xf78f, 0xe606, 0xd49d, 0xc514, 0xb1ab, 0xa022, 0x92b9, 0x8330,
+                0x7bc7, 0x6a4e, 0x58d5, 0x495c, 0x3de3, 0x2c6a, 0x1ef1, 0x0f78
+        };
+
+
+/**
+  * @brief          calculate the crc8  
+  * @param[in]      pch_message: data
+  * @param[in]      dw_length: stream length = data + checksum
+  * @param[in]      ucCRC8: init CRC8
+  * @retval         calculated crc8
+  */
+/**
+  * @brief          计算CRC8
+  * @param[in]      pch_message: 数据
+  * @param[in]      dw_length: 数据和校验的长度
+  * @param[in]      ucCRC8:初始CRC8
+  * @retval         计算完的CRC8
+  */
+uint8_t get_CRC8_check_sum(unsigned char *pch_message, unsigned int dw_length, unsigned char ucCRC8)
+{
+    unsigned char uc_index;
+    while (dw_length--) {
+        uc_index = ucCRC8 ^ (*pch_message++);
+        ucCRC8 = CRC8_table[uc_index];
+    }
+    return (ucCRC8);
+}
+
+
+/**
+  * @brief          CRC8 verify function  
+  * @param[in]      pch_message: data
+  * @param[in]      dw_length:stream length = data + checksum
+  * @retval         true of false
+  */
+/**
+  * @brief          CRC8校验函数
+  * @param[in]      pch_message: 数据
+  * @param[in]      dw_length: 数据和校验的长度
+  * @retval         真或者假
+  */
+uint32_t verify_CRC8_check_sum(unsigned char *pch_message, unsigned int dw_length)
+{
+    unsigned char ucExpected = 0;
+    if ((pch_message == 0) || (dw_length <= 2)) {
+        return 0;
+    }
+    ucExpected = get_CRC8_check_sum(pch_message, dw_length - 1, CRC8_INIT);
+    return (ucExpected == pch_message[dw_length - 1]);
+}
+
+
+/**
+  * @brief          append CRC8 to the end of data
+  * @param[in]      pch_message: data
+  * @param[in]      dw_length:stream length = data + checksum
+  * @retval         none
+  */
+/**
+  * @brief          添加CRC8到数据的结尾
+  * @param[in]      pch_message: 数据
+  * @param[in]      dw_length: 数据和校验的长度
+  * @retval         none
+  */
+void append_CRC8_check_sum(unsigned char *pch_message, unsigned int dw_length)
+{
+    unsigned char ucCRC = 0;
+    if ((pch_message == 0) || (dw_length <= 2)) {
+        return;
+    }
+    ucCRC = get_CRC8_check_sum((unsigned char *) pch_message, dw_length - 1, CRC8_INIT);
+    pch_message[dw_length - 1] = ucCRC;
+}
+
+
+/**
+  * @brief          calculate the crc16  
+  * @param[in]      pch_message: data
+  * @param[in]      dw_length: stream length = data + checksum
+  * @param[in]      wCRC: init CRC16
+  * @retval         calculated crc16
+  */
+/**
+  * @brief          计算CRC16
+  * @param[in]      pch_message: 数据
+  * @param[in]      dw_length: 数据和校验的长度
+  * @param[in]      wCRC:初始CRC16
+  * @retval         计算完的CRC16
+  */
+uint16_t get_CRC16_check_sum(uint8_t *pch_message, uint32_t dw_length, uint16_t wCRC)
+{
+    uint8_t chData;
+    if (pch_message == NULL) {
+        return 0xFFFF;
+    }
+    while (dw_length--) {
+        chData = *pch_message++;
+        (wCRC) = ((uint16_t) (wCRC) >> 8) ^ wCRC_table[((uint16_t) (wCRC) ^ (uint16_t) (chData)) & 0x00ff];
+    }
+    return wCRC;
+}
+
+
+/**
+  * @brief          CRC16 verify function  
+  * @param[in]      pch_message: data
+  * @param[in]      dw_length:stream length = data + checksum
+  * @retval         true of false
+  */
+/**
+  * @brief          CRC16校验函数
+  * @param[in]      pch_message: 数据
+  * @param[in]      dw_length: 数据和校验的长度
+  * @retval         真或者假
+  */
+uint32_t verify_CRC16_check_sum(uint8_t *pchMessage, uint32_t dwLength)
+{
+    uint16_t wExpected = 0;
+    if ((pchMessage == NULL) || (dwLength <= 2)) {
+        return 0;
+    }
+    wExpected = get_CRC16_check_sum(pchMessage, dwLength - 2, CRC16_INIT);
+    return ((wExpected & 0xff) == pchMessage[dwLength - 2] && ((wExpected >> 8) & 0xff) == pchMessage[dwLength - 1]);
+}
+
+
+/**
+  * @brief          append CRC16 to the end of data
+  * @param[in]      pch_message: data
+  * @param[in]      dw_length:stream length = data + checksum
+  * @retval         none
+  */
+/**
+  * @brief          添加CRC16到数据的结尾
+  * @param[in]      pch_message: 数据
+  * @param[in]      dw_length: 数据和校验的长度
+  * @retval         none
+  */
+void append_CRC16_check_sum(uint8_t *pchMessage, uint32_t dwLength)
+{
+    uint16_t wCRC = 0;
+    if ((pchMessage == NULL) || (dwLength <= 2)) {
+        return;
+    }
+    wCRC = get_CRC16_check_sum((uint8_t *) pchMessage, dwLength - 2, CRC16_INIT);
+    pchMessage[dwLength - 2] = (uint8_t) (wCRC & 0x00ff);
+    pchMessage[dwLength - 1] = (uint8_t) ((wCRC >> 8) & 0x00ff);
+}
+
+/* CRC32 (Ethernet polynomial: 0x04C11DB7, reflected: 0xEDB88320) ------------*/
+
+static const uint32_t s_CRC32_table[256] = {
+    0x00000000U, 0x77073096U, 0xEE0E612CU, 0x990951BAU, 0x076DC419U, 0x706AF48FU,
+    0xE963A535U, 0x9E6495A3U, 0x0EDB8832U, 0x79DCB8A4U, 0xE0D5E91EU, 0x97D2D988U,
+    0x09B64C2BU, 0x7EB17CBDU, 0xE7B82D07U, 0x90BF1D91U, 0x1DB71064U, 0x6AB020F2U,
+    0xF3B97148U, 0x84BE41DEU, 0x1ADAD47DU, 0x6DDDE4EBU, 0xF4D4B551U, 0x83D385C7U,
+    0x136C9856U, 0x646BA8C0U, 0xFD62F97AU, 0x8A65C9ECU, 0x14015C4FU, 0x63066CD9U,
+    0xFA0F3D63U, 0x8D080DF5U, 0x3B6E20C8U, 0x4C69105EU, 0xD56041E4U, 0xA2677172U,
+    0x3C03E4D1U, 0x4B04D447U, 0xD20D85FDU, 0xA50AB56BU, 0x35B5A8FAU, 0x42B2986CU,
+    0xDBBBC9D6U, 0xACBCF940U, 0x32D86CE3U, 0x45DF5C75U, 0xDCD60DCFU, 0xABD13D59U,
+    0x26D930ACU, 0x51DE003AU, 0xC8D75180U, 0xBFD06116U, 0x21B4F4B5U, 0x56B3C423U,
+    0xCFBA9599U, 0xB8BDA50FU, 0x2802B89EU, 0x5F058808U, 0xC60CD9B2U, 0xB10BE924U,
+    0x2F6F7C87U, 0x58684C11U, 0xC1611DABU, 0xB6662D3DU, 0x76DC4190U, 0x01DB7106U,
+    0x98D220BCU, 0xEFD5102AU, 0x71B18589U, 0x06B6B51FU, 0x9FBFE4A5U, 0xE8B8D433U,
+    0x7807C9A2U, 0x0F00F934U, 0x9609A88EU, 0xE10E9818U, 0x7F6A0DBBU, 0x086D3D2DU,
+    0x91646C97U, 0xE6635C01U, 0x6B6B51F4U, 0x1C6C6162U, 0x856530D8U, 0xF262004EU,
+    0x6C0695EDU, 0x1B01A57BU, 0x8208F4C1U, 0xF50FC457U, 0x65B0D9C6U, 0x12B7E950U,
+    0x8BBEB8EAU, 0xFCB9887CU, 0x62DD1DDFU, 0x15DA2D49U, 0x8CD37CF3U, 0xFBD44C65U,
+    0x4DB26158U, 0x3AB551CEU, 0xA3BC0074U, 0xD4BB30E2U, 0x4ADFA541U, 0x3DD895D7U,
+    0xA4D1C46DU, 0xD3D6F4FBU, 0x4369E96AU, 0x346ED9FCU, 0xAD678846U, 0xDA60B8D0U,
+    0x44042D73U, 0x33031DE5U, 0xAA0A4C5FU, 0xDD0D7CC9U, 0x5005713CU, 0x270241AAU,
+    0xBE0B1010U, 0xC90C2086U, 0x5768B525U, 0x206F85B3U, 0xB966D409U, 0xCE61E49FU,
+    0x5EDEF90EU, 0x29D9C998U, 0xB0D09822U, 0xC7D7A8B4U, 0x59B33D17U, 0x2EB40D81U,
+    0xB7BD5C3BU, 0xC0BA6CADU, 0xEDB88320U, 0x9ABFB3B6U, 0x03B6E20CU, 0x74B1D29AU,
+    0xEAD54739U, 0x9DD277AFU, 0x04DB2615U, 0x73DC1683U, 0xE3630B12U, 0x94643B84U,
+    0x0D6D6A3EU, 0x7A6A5AA8U, 0xE40ECF0BU, 0x9309FF9DU, 0x0A00AE27U, 0x7D079EB1U,
+    0xF00F9344U, 0x8708A3D2U, 0x1E01F268U, 0x6906C2FEU, 0xF762575DU, 0x806567CBU,
+    0x196C3671U, 0x6E6B06E7U, 0xFED41B76U, 0x89D32BE0U, 0x10DA7A5AU, 0x67DD4ACCU,
+    0xF9B9DF6FU, 0x8EBEDFF9U, 0x17B7BE43U, 0x60B08ED5U, 0xD6D6A3E8U, 0xA1D1937EU,
+    0x38D8C2C4U, 0x4FDFF252U, 0xD1BB67F1U, 0xA6BC5767U, 0x3FB506DDU, 0x48B2364BU,
+    0xD80D2BDAU, 0xAF0A1B4CU, 0x36034AF6U, 0x41047A60U, 0xDF60EFC3U, 0xA867DF55U,
+    0x316E8EEFU, 0x4669BE79U, 0xCB61B38CU, 0xBC66831AU, 0x256FD2A0U, 0x5268E236U,
+    0xCC0C7795U, 0xBB0B4703U, 0x220216B9U, 0x5505262FU, 0xC5BA3BBEU, 0xB2BD0B28U,
+    0x2BB45A92U, 0x5CB30A04U, 0xC2D7FFA7U, 0xB5D0CF31U, 0x2CD99E8BU, 0x5BDEAE1DU,
+    0x9B64C2B0U, 0xEC63F226U, 0x756AA39CU, 0x026D930AU, 0x9C0906A9U, 0xEB0E363FU,
+    0x72076785U, 0x05005713U, 0x95BF4A82U, 0xE2B87A14U, 0x7BB12BAEU, 0x0CB61B38U,
+    0x92D28E9BU, 0xE5D5BE0DU, 0x7CDCEFB7U, 0x0BDBDF21U, 0x86D3D2D4U, 0xF1D4E242U,
+    0x68DDB3F8U, 0x1FDA836EU, 0x81BE16CDU, 0xF6B9265BU, 0x6FB077E1U, 0x18B74777U,
+    0x88085AE6U, 0xFF0F6A70U, 0x66063BCAU, 0x11010B5CU, 0x8F659EFFU, 0xF862AE69U,
+    0x616BFFD3U, 0x166CCF45U, 0xA00AE278U, 0xD70DD2EEU, 0x4E048354U, 0x3903B3C2U,
+    0xA7672661U, 0xD06016F7U, 0x4969474DU, 0x3E6E77DBU, 0xAED16A4AU, 0xD9D65ADCU,
+    0x40DF0B66U, 0x37D83BF0U, 0xA9BCAE53U, 0xDEBB9EC5U, 0x47B2CF7FU, 0x30B5FFE9U,
+    0xBDBDF21CU, 0xCABAC28AU, 0x53B39330U, 0x24B4A3A6U, 0xBAD03605U, 0xCDD70693U,
+    0x54DE5729U, 0x23D967BFU, 0xB3667A2EU, 0xC4614AB8U, 0x5D681B02U, 0x2A6F2B94U,
+    0xB40BBE37U, 0xC30C8EA1U, 0x5A05DF1BU, 0x2D02EF8DU
+};
+
+/**
+  * @brief          计算CRC32
+  * @param[in]      pch_message: 数据缓冲区
+  * @param[in]      dw_length: 数据长度
+  * @param[in]      init_crc: 初始CRC32值（通常为0xFFFFFFFF）
+  * @retval         计算完的CRC32
+  */
+uint32_t get_CRC32_check_sum(const uint8_t* pch_message, uint32_t dw_length, uint32_t init_crc)
+{
+    uint32_t crc = init_crc;
+    if (pch_message == NULL) {
+        return 0U;
+    }
+    while (dw_length--) {
+        crc = s_CRC32_table[((uint8_t)crc ^ (*pch_message++))] ^ (crc >> 8);
+    }
+    return crc ^ 0xFFFFFFFFU; /* 标准 Ethernet CRC32 最终异或 */
+}
+
+/**
+  * @brief          CRC32校验函数
+  * @param[in]      pch_message: 数据（末尾4字节为CRC32值，大端序）
+  * @param[in]      dw_length: 数据+校验的总长度
+  * @retval         1=校验通过，0=校验失败
+  */
+uint32_t verify_CRC32_check_sum(const uint8_t* pch_message, uint32_t dw_length)
+{
+    uint32_t calculated, stored;
+    if ((pch_message == NULL) || (dw_length <= 4)) {
+        return 0U;
+    }
+    calculated = get_CRC32_check_sum(pch_message, dw_length - 4, 0xFFFFFFFFU);
+    /* 标准 CRC32 以小端序存储 */
+    stored = (uint32_t)pch_message[dw_length - 4]
+           | ((uint32_t)pch_message[dw_length - 3] << 8)
+           | ((uint32_t)pch_message[dw_length - 2] << 16)
+           | ((uint32_t)pch_message[dw_length - 1] << 24);
+    return (calculated == stored) ? 1U : 0U;
+}
+
+/**
+  * @brief          添加CRC32到数据的结尾（大端序）
+  * @param[in]      pch_message: 数据缓冲区
+  * @param[in]      dw_length: 数据+校验的总长度，CRC32写入末尾4字节
+  */
+void append_CRC32_check_sum(uint8_t* pch_message, uint32_t dw_length)
+{
+    uint32_t crc;
+    if ((pch_message == NULL) || (dw_length <= 4)) {
+        return;
+    }
+    crc = get_CRC32_check_sum(pch_message, dw_length - 4, 0xFFFFFFFFU);
+    /* 标准 CRC32 以小端序写入末尾 4 字节 */
+    pch_message[dw_length - 4] = (uint8_t)(crc);
+    pch_message[dw_length - 3] = (uint8_t)(crc >> 8);
+    pch_message[dw_length - 2] = (uint8_t)(crc >> 16);
+    pch_message[dw_length - 1] = (uint8_t)(crc >> 24);
+}
