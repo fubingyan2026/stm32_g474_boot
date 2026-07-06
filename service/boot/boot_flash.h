@@ -22,18 +22,18 @@ extern "C" {
 
 /** Flash 物理参数 */
 #define BOOT_FLASH_BASE         0x08000000U  /**< Flash 起始地址 */
-#define BOOT_FLASH_TOTAL_SIZE   0x20000U     /**< 128 KB */
+#define BOOT_FLASH_TOTAL_SIZE   0x40000U     /**< 256 KB */
 #define BOOT_FLASH_PAGE_SIZE    0x800U       /**< 2 KB/页 */
 
 /** 分区布局 */
-#define BOOT_FLASH_BOOT_SIZE    0x4000U      /**< Bootloader: 16 KB */
-#define BOOT_FLASH_APP_SIZE     0x8000U      /**< App 分区: 32 KB */
+#define BOOT_FLASH_BOOT_SIZE    0x8000U      /**< Bootloader: 32 KB */
+#define BOOT_FLASH_APP_SIZE     0x19000U      /**< App 分区:  100KB */
 #define BOOT_FLASH_META_SIZE    0x800U       /**< Metadata: 2 KB (1 页) */
 
 #define BOOT_FLASH_BOOT_ADDR    BOOT_FLASH_BASE                        /**< 0x08000000 */
-#define BOOT_FLASH_APP_A_ADDR   (BOOT_FLASH_BOOT_ADDR + BOOT_FLASH_BOOT_SIZE) /**< 0x08004000 */
-#define BOOT_FLASH_APP_B_ADDR   (BOOT_FLASH_APP_A_ADDR + BOOT_FLASH_APP_SIZE) /**< 0x0800C000 */
-#define BOOT_FLASH_META_ADDR    (BOOT_FLASH_APP_B_ADDR + BOOT_FLASH_APP_SIZE) /**< 0x08014000 */
+#define BOOT_FLASH_APP_A_ADDR   (BOOT_FLASH_BOOT_ADDR + BOOT_FLASH_BOOT_SIZE) /**< 0x08008000 */
+#define BOOT_FLASH_APP_B_ADDR   (BOOT_FLASH_APP_A_ADDR + BOOT_FLASH_APP_SIZE) /**< 0x08021000 */
+#define BOOT_FLASH_META_ADDR    (BOOT_FLASH_APP_B_ADDR + BOOT_FLASH_APP_SIZE) /**< 0x0803A000 */
 
 /** Metadata 魔数 */
 #define BOOT_METADATA_MAGIC     0x424F4F54U  /**< "BOOT" */
