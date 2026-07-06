@@ -381,6 +381,7 @@ static fsm_state_t handler_data_transfer(fsm_t* fsm)
         ctx->total_received += BOOT_BLOCK_SIZE;
         ctx->block_accumulated_len = 0U;
         ctx->expected_seq = 0U;
+        memset(ctx->ram_block_buffer, 0, sizeof(ctx->ram_block_buffer));
 
         send_ack(ctx, BOOT_CMD_DATA_END);
 

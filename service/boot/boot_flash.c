@@ -80,7 +80,6 @@ boot_flash_error_t boot_flash_verify_block(boot_flash_context_t* ctx,
     const uint8_t* data, uint32_t len)
 {
     uint32_t addr;
-    uint8_t buf[8];
     uint32_t i;
     const uint8_t* flash_ptr;
 
@@ -100,7 +99,6 @@ boot_flash_error_t boot_flash_verify_block(boot_flash_context_t* ctx,
             return BOOT_FLASH_ERROR_VERIFY;
         }
     }
-    (void)buf; /* 预留：如需使用对齐读取 */
     return BOOT_FLASH_OK;
 }
 

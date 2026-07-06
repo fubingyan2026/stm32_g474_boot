@@ -42,17 +42,17 @@ void boot_transport_parse_header(const drv_can_msg_t* msg,
 bool boot_transport_parse_start(const drv_can_msg_t* msg,
     uint32_t* fw_size, uint16_t* hw_id, uint8_t* max_frame_size)
 {
-    /* START 帧最少需要 9 字节：cmd(1) + seq(1) + fw_size(4) + hw_id(2) + frame_size(1) */
-    if (msg->dlc < 9U) {
+    /* 8 字节：cmd(1) + fw_size(4) + hw_id(2) + max_frame_size(1) */
+    if (msg->dlc < 8U) {
         return false;
     }
 
-    *fw_size = ((uint32_t)msg->data[2] << 24)
-             | ((uint32_t)msg->data[3] << 16)
-             | ((uint32_t)msg->data[4] << 8)
-             |  (uint32_t)msg->data[5];
-    *hw_id   = ((uint16_t)msg->data[6] << 8) | (uint16_t)msg->data[7];
-    *max_frame_size = msg->data[8];
+    *fw_size = ((uint32_t)msg->data[1] << 24)
+             | ((uint32_t)msg->data[2] << 16)
+             | ((uint32_t)msg->data[3] << 8)
+             |  (uint32_t)msg->data[4];
+    *hw_id   = ((uint16_t)msg->data[5] << 8) | (uint16_t)msg->data[6];
+    *max_frame_size = msg->data[7];
 
     return boot_transport_is_valid_frame_size(*max_frame_size);
 }
@@ -107,8 +107,9 @@ void boot_transport_build_ack(drv_can_msg_t* msg, uint8_t cmd, uint8_t status)
     memset(msg, 0, sizeof(*msg));
     msg->id = BOOT_CAN_ID_NODE_TO_HOST;
     msg->is_extended = false;
-    msg->data[0] = cmd;
-    msg->data[1] = status;
+    msg->data[0] = BOOT_CMD_ACK;
+    msg->data[1] = cmd;
+    msg->data[2] = status;
     /* ACK 帧使用经典 CAN 8 字节长度，其余填充 0 */
     msg->dlc = 8U;
 }

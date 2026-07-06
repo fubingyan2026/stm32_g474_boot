@@ -14,7 +14,6 @@
 #include "boot_transport.h"
 #include "drv_can.h"
 #include "drv_stm32g4_flash.h"
-#include "event.h"
 #include "fdcan.h"
 #include "fsm.h"
 #include "log.h"
@@ -27,16 +26,13 @@
 #define BOOT_MSG_FIFO_SIZE  16U
 
 /** 主循环轮询周期 (ms) */
-#define BOOT_TASK_PERIOD_MS 5U
+#define BOOT_TASK_PERIOD_MS 1U
 
 /* Private variables ---------------------------------------------------------*/
 
 /* CAN 消息队列 */
 static drv_can_msg_t s_msg_fifo_buffer[BOOT_MSG_FIFO_SIZE];
 static msg_fifo_t s_msg_fifo;
-
-/* ISR → 主循环事件 */
-static event_t s_rx_event;
 
 /* Flash 分区管理器 */
 static boot_flash_context_t s_flash_ctx;
@@ -124,26 +120,22 @@ void boot_task_init(void)
 {
     boot_flash_error_t flash_err;
     boot_fsm_config_t fsm_config;
-    sw_timer_config_t timer_config;
     drv_can_error_t can_err;
 
     LOG_I("boot", "initializing bootloader...");
 
-    /* 1. 初始化消息队列 */
+    /* 初始化消息队列 */
     msg_fifo_init(&s_msg_fifo, s_msg_fifo_buffer,
         sizeof(s_msg_fifo_buffer), sizeof(drv_can_msg_t));
 
-    /* 2. 初始化事件 */
-    event_init(&s_rx_event);
-
-    /* 3. 初始化 Flash */
+    /* 2. 初始化 Flash */
     flash_err = boot_flash_init(&s_flash_ctx);
     if (flash_err != BOOT_FLASH_OK) {
         LOG_E("boot", "flash init failed: %d", flash_err);
         return;
     }
 
-    /* 4. 初始化 CAN（通道 1） */
+    /* 初始化 CAN（通道 1） */
     can_err = drv_can_init(DRV_CAN_CH_1, &hfdcan1);
     if (can_err != DRV_CAN_OK) {
         LOG_E("boot", "CAN init failed: %d", can_err);
@@ -151,7 +143,7 @@ void boot_task_init(void)
     }
     drv_can_register_rx_callback(DRV_CAN_CH_1, can_rx_callback);
 
-    /* 5. 初始化状态机 */
+    /* 初始化状态机 */
     memset(&fsm_config, 0, sizeof(fsm_config));
     fsm_config.write_block_cb = write_block_cb;
     fsm_config.verify_block_cb = verify_block_cb;
@@ -167,7 +159,7 @@ void boot_task_init(void)
         return;
     }
 
-    /* 6. 创建轮询定时器 */
+    /* 创建轮询定时器 */
     sw_timer_init(&s_timer,
         &(sw_timer_config_t){
             .priority = SW_TIMER_PRIO_NORMAL,
@@ -190,7 +182,6 @@ static void can_rx_callback(drv_can_channel_t ch, const drv_can_msg_t* msg)
     /* 仅处理来自上位机的消息 */
     if (msg->id == BOOT_CAN_ID_HOST_TO_NODE) {
         msg_fifo_push(&s_msg_fifo, msg);
-        event_send(&s_rx_event, 0x01U);
     }
 }
 
@@ -203,14 +194,7 @@ static void boot_timer_cb(void* user_data)
     drv_can_msg_t response;
     (void)user_data;
 
-    /* 检查是否有 CAN 消息 */
-    if (!event_recv(&s_rx_event, 0x01U, false, true)) {
-        /* 无消息，仅更新超时 */
-        boot_fsm_tick(&s_fsm_ctx);
-        return;
-    }
-
-    /* 消费所有待处理消息 */
+    /* 消费所有待处理 CAN 消息 */
     while (msg_fifo_pop(&s_msg_fifo, &msg)) {
         boot_fsm_process_msg(&s_fsm_ctx, &msg);
 
