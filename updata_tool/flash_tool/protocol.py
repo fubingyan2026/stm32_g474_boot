@@ -194,6 +194,11 @@ def compute_crc32(data: bytes) -> int:
     return crc ^ 0xFFFFFFFF
 
 
+def compute_checksum32(data: bytes) -> int:
+    """32-bit 累加和校验（用于 VERIFY 阶段整包固件校验）。"""
+    return sum(data) & 0xFFFFFFFF
+
+
 # ── Block 拆分 ──
 
 def block_chunks(fw_data: bytes, max_frame_size: int) -> list[bytes]:

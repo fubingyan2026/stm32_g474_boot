@@ -147,6 +147,7 @@ class MainWindow(QMainWindow):
             fd_mode=cfg_dict["fd_mode"],
             data_bitrate=cfg_dict["data_bitrate"],
             max_frame_size=cfg_dict["max_frame_size"],
+            can_id=cfg_dict["can_id"],
         )
 
         # 禁用所有设备操作

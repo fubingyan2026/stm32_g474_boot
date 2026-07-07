@@ -113,12 +113,12 @@ bool boot_transport_parse_start(const drv_can_msg_t* msg,
 /**
  * @brief 解析 METADATA 帧
  * @param msg CAN 消息
- * @param crc32 输出：整包 CRC32 (uint32, Byte 1-4)
+ * @param checksum 输出：整包校验和 (uint32, Byte 1-4)
  * @param version 输出：版本号 (uint16, Byte 5-6)
  * @return true 表示帧格式有效
  */
 bool boot_transport_parse_metadata(const drv_can_msg_t* msg,
-    uint32_t* crc32, uint16_t* version);
+    uint32_t* checksum, uint16_t* version);
 
 /**
  * @brief 解析 DATA 帧，提取数据载荷

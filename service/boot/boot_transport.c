@@ -58,14 +58,14 @@ bool boot_transport_parse_start(const drv_can_msg_t* msg,
 }
 
 bool boot_transport_parse_metadata(const drv_can_msg_t* msg,
-    uint32_t* crc32, uint16_t* version)
+    uint32_t* checksum, uint16_t* version)
 {
-    /* METADATA 帧最少需要 7 字节：cmd(1) + seq(1) + crc32(4) + version(2) */
+    /* METADATA 帧最少需要 7 字节：cmd(1) + seq(1) + checksum(4) + version(2) */
     if (msg->dlc < 7U) {
         return false;
     }
 
-    *crc32   = ((uint32_t)msg->data[1] << 24)
+    *checksum   = ((uint32_t)msg->data[1] << 24)
              | ((uint32_t)msg->data[2] << 16)
              | ((uint32_t)msg->data[3] << 8)
              |  (uint32_t)msg->data[4];

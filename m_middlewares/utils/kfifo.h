@@ -48,17 +48,17 @@ typedef uint32_t kfifo_lock_state_t;
 /* STM32 裸机安全嵌套中断锁。如果用 FreeRTOS，可换成 taskENTER_CRITICAL_FROM_ISR
  */
 #define KFIFO_LOCK(flags)          \
-    do {                           \
-        (flags) = __get_PRIMASK(); \
-        __disable_irq();           \
-    } while (0)
+    // do {                           \
+    //     (flags) = __get_PRIMASK(); \
+    //     __disable_irq();           \
+    // } while (0)
 #endif
 
 #ifndef KFIFO_UNLOCK
 #define KFIFO_UNLOCK(flags)   \
-    do {                      \
-        __set_PRIMASK(flags); \
-    } while (0)
+    // do {                      \
+    //     __set_PRIMASK(flags); \
+    // } while (0)
 #endif
 
 

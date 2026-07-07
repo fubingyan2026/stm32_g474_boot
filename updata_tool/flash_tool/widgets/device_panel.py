@@ -83,6 +83,10 @@ class DevicePanel(QWidget):
         self.frame_size_combo.setEnabled(False)
         bf.addRow("帧长度:", self.frame_size_combo)
 
+        self.can_id_edit = QLineEdit("0x701")
+        self.can_id_edit.setToolTip("Host→Node CAN ID，Node→Host 自动设为 ID+1")
+        bf.addRow("CAN ID:", self.can_id_edit)
+
         self.hw_id_edit = QLineEdit("0x0001")
         bf.addRow("HW Compat ID:", self.hw_id_edit)
 
@@ -172,6 +176,7 @@ class DevicePanel(QWidget):
             "fd_mode": self.fd_chk.isChecked(),
             "data_bitrate": self.data_bitrate_combo.currentData(),
             "max_frame_size": self.frame_size_combo.currentData(),
+            "can_id": int(self.can_id_edit.text(), 16) if self.can_id_edit.text().startswith("0x") else int(self.can_id_edit.text()),
             "hw_compat_id": int(self.hw_id_edit.text(), 16) if self.hw_id_edit.text().startswith("0x") else int(self.hw_id_edit.text()),
             "version": self.version_spin.value(),
         }

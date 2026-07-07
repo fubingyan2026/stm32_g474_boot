@@ -42,7 +42,7 @@ typedef uint8_t (*boot_fsm_verify_block_cb_t)(void* user_data,
 
 /** 状态机回调：整包 CRC32 校验 */
 typedef uint8_t (*boot_fsm_verify_fw_cb_t)(void* user_data,
-    uint32_t size, uint32_t* crc32);
+    uint32_t size, uint32_t* checksum);
 
 /** 状态机回调：擦除分区 */
 typedef uint8_t (*boot_fsm_erase_cb_t)(void* user_data);
@@ -50,7 +50,7 @@ typedef uint8_t (*boot_fsm_erase_cb_t)(void* user_data);
 /** 状态机回调：写入 Metadata 启动标志 */
 typedef uint8_t (*boot_fsm_set_flag_cb_t)(void* user_data,
     uint8_t boot_partition, uint16_t version,
-    uint32_t fw_size, uint32_t fw_crc32);
+    uint32_t fw_size, uint32_t fw_checksum);
 
 /** 状态机回调：系统复位 */
 typedef void (*boot_fsm_reset_cb_t)(void* user_data);
@@ -82,6 +82,9 @@ typedef struct {
 
     /* 本地硬件 ID */
     uint16_t hw_compat_id;                           /**< 本机硬件兼容 ID */
+
+    /* 目标分区 */
+    uint8_t  target_partition;                       /**< 目标写入分区 (BOOT_PARTITION_A 或 B) */
 } boot_fsm_config_t;
 
 /** 状态机上下文（嵌套 fsm） */
@@ -91,7 +94,7 @@ struct boot_fsm_context {
 
     /* 协商参数 */
     uint32_t fw_total_size;        /**< 固件总大小 */
-    uint32_t fw_crc32;             /**< 固件 CRC32 */
+    uint32_t fw_checksum;          /**< 固件校验和 */
     uint16_t fw_version;           /**< 固件版本号 */
     uint8_t  max_frame_size;       /**< 协商的单帧物理长度 */
 

@@ -223,7 +223,6 @@ void append_CRC16_check_sum(uint8_t *pchMessage, uint32_t dwLength)
 }
 
 /* CRC32 (Ethernet polynomial: 0x04C11DB7, reflected: 0xEDB88320) ------------*/
-
 static const uint32_t s_CRC32_table[256] = {
     0x00000000U, 0x77073096U, 0xEE0E612CU, 0x990951BAU, 0x076DC419U, 0x706AF48FU,
     0xE963A535U, 0x9E6495A3U, 0x0EDB8832U, 0x79DCB8A4U, 0xE0D5E91EU, 0x97D2D988U,
@@ -271,7 +270,7 @@ static const uint32_t s_CRC32_table[256] = {
 };
 
 /**
-  * @brief          计算CRC32
+  * @brief          计算CRC32 (高安全、高效率优化版)
   * @param[in]      pch_message: 数据缓冲区
   * @param[in]      dw_length: 数据长度
   * @param[in]      init_crc: 初始CRC32值（通常为0xFFFFFFFF）
@@ -279,14 +278,32 @@ static const uint32_t s_CRC32_table[256] = {
   */
 uint32_t get_CRC32_check_sum(const uint8_t* pch_message, uint32_t dw_length, uint32_t init_crc)
 {
-    uint32_t crc = init_crc;
+    /* 1. 安全边界检查：若传入空指针，为防止后续解引用崩溃，安全返回 0 */
     if (pch_message == NULL) {
         return 0U;
     }
-    while (dw_length--) {
-        crc = s_CRC32_table[((uint8_t)crc ^ (*pch_message++))] ^ (crc >> 8);
+
+    uint32_t crc = init_crc;
+    const uint8_t* msg = pch_message;
+
+    /* 2. 局部循环展开：每次处理 4 个字节，极大降低 CPU 循环控制指令开销
+          严格遵循 C 语言标准，通过 uint8_t 逐字节读取，100% 免疫严苛的地址对齐限制 */
+    while (dw_length >= 4U) {
+        crc = s_CRC32_table[(uint8_t)(crc ^ *msg++)] ^ (crc >> 8);
+        crc = s_CRC32_table[(uint8_t)(crc ^ *msg++)] ^ (crc >> 8);
+        crc = s_CRC32_table[(uint8_t)(crc ^ *msg++)] ^ (crc >> 8);
+        crc = s_CRC32_table[(uint8_t)(crc ^ *msg++)] ^ (crc >> 8);
+        dw_length -= 4U;
     }
-    return crc ^ 0xFFFFFFFFU; /* 标准 Ethernet CRC32 最终异或 */
+
+    /* 3. 处理剩余不足 4 字节的数据 */
+    while (dw_length > 0U) {
+        crc = s_CRC32_table[(uint8_t)(crc ^ *msg++)] ^ (crc >> 8);
+        dw_length--;
+    }
+
+    /* 4. 标准以太网最终 XOR 反转 */
+    return crc ^ 0xFFFFFFFFU;
 }
 
 /**

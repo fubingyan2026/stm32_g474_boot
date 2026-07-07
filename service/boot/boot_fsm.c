@@ -269,8 +269,8 @@ static fsm_state_t handler_idle(fsm_t* fsm)
     ctx->max_frame_size = max_frame_size;
     reset_transfer_state(ctx);
 
-    /* 擦除目标分区（默认写 App A） */
-    ctx->target_partition = BOOT_PARTITION_A;
+    /* 擦除目标分区（由 boot_task 根据当前有效分区决定 A/B） */
+    ctx->target_partition = ctx->config.target_partition;
     LOG_I(BOOT_TAG, "擦除目标分区 App %c", 'A' + ctx->target_partition);
     if (ctx->config.erase_cb(ctx->config.user_data) != 0U) {
         LOG_E(BOOT_TAG, "分区擦除失败");
@@ -290,7 +290,7 @@ static fsm_state_t handler_start(fsm_t* fsm)
 {
     boot_fsm_context_t* ctx = (boot_fsm_context_t*)fsm_user_data(fsm);
     uint8_t cmd, seq;
-    uint32_t crc32;
+    uint32_t checksum;
     uint16_t version;
 
     boot_transport_parse_header(s_pending_msg, &cmd, &seq);
@@ -318,16 +318,16 @@ static fsm_state_t handler_start(fsm_t* fsm)
         return BOOT_STATE_START;
     }
 
-    if (!boot_transport_parse_metadata(s_pending_msg, &crc32, &version)) {
+    if (!boot_transport_parse_metadata(s_pending_msg, &checksum, &version)) {
         LOG_E(BOOT_TAG, "METADATA 帧格式无效");
         send_nack(ctx, BOOT_CMD_METADATA, BOOT_STATUS_INVALID_FRAME);
         return BOOT_STATE_START;
     }
 
     /* 保存元数据 */
-    ctx->fw_crc32 = crc32;
+    ctx->fw_checksum = checksum;
     ctx->fw_version = version;
-    LOG_I(BOOT_TAG, "收到 METADATA: crc32=0x%08X, version=%u", crc32, version);
+    LOG_I(BOOT_TAG, "收到 METADATA: checksum=0x%08X, version=%u", checksum, version);
 
     send_ack(ctx, BOOT_CMD_METADATA);
     LOG_I(BOOT_TAG, "→ DATA_TRANSFER 状态");
@@ -468,7 +468,7 @@ static fsm_state_t handler_verify_pending(fsm_t* fsm)
 {
     boot_fsm_context_t* ctx = (boot_fsm_context_t*)fsm_user_data(fsm);
     uint8_t cmd, seq;
-    uint32_t calculated_crc32;
+    uint32_t calculated_checksum;
 
     boot_transport_parse_header(s_pending_msg, &cmd, &seq);
 
@@ -479,25 +479,30 @@ static fsm_state_t handler_verify_pending(fsm_t* fsm)
         return BOOT_STATE_VERIFY_PENDING;
     }
 
-    LOG_I(BOOT_TAG, "收到 VERIFY 命令，开始整包 CRC32 校验");
+    LOG_I(BOOT_TAG, "收到 VERIFY 命令，开始整包校验和验证");
 
-    /* 计算整包 CRC32 */
+    /* 计算整包 32-bit 累加和 */
     if (ctx->config.verify_fw_cb(ctx->config.user_data,
-            ctx->fw_total_size, &calculated_crc32)
+            ctx->fw_total_size, &calculated_checksum)
         != 0U) {
-        LOG_E(BOOT_TAG, "Flash 读取失败，无法计算 CRC32");
+        LOG_E(BOOT_TAG, "Flash 读取失败，无法计算校验和");
         send_nack(ctx, BOOT_CMD_VERIFY, BOOT_STATUS_FLASH_READ_ERR);
         return BOOT_STATE_IDLE;
     }
 
-    if (calculated_crc32 != ctx->fw_crc32) {
-        LOG_E(BOOT_TAG, "CRC32 不匹配: 期望 0x%08X, 计算 0x%08X",
-            ctx->fw_crc32, calculated_crc32);
+    LOG_I(BOOT_TAG, "Checksum: Flash=0x%08lX, Host=0x%08lX",
+        (unsigned long)calculated_checksum,
+        (unsigned long)ctx->fw_checksum);
+
+    if (calculated_checksum != ctx->fw_checksum) {
+        LOG_E(BOOT_TAG, "校验和不匹配: 期望 0x%08lX, 计算 0x%08lX",
+            (unsigned long)ctx->fw_checksum, (unsigned long)calculated_checksum);
         send_nack(ctx, BOOT_CMD_VERIFY, BOOT_STATUS_CRC32_ERR);
         return BOOT_STATE_IDLE;
     }
 
-    LOG_I(BOOT_TAG, "CRC32 校验通过 (0x%08X) → REBOOT_PENDING", calculated_crc32);
+    LOG_I(BOOT_TAG, "校验和通过 (0x%08lX) → REBOOT_PENDING",
+        (unsigned long)calculated_checksum);
     send_ack(ctx, BOOT_CMD_VERIFY);
     return BOOT_STATE_REBOOT_PENDING;
 }
@@ -524,7 +529,7 @@ static fsm_state_t handler_reboot_pending(fsm_t* fsm)
     /* 设置 Metadata 启动标志 */
     ctx->config.set_flag_cb(ctx->config.user_data,
         ctx->target_partition, ctx->fw_version,
-        ctx->fw_total_size, ctx->fw_crc32);
+        ctx->fw_total_size, ctx->fw_checksum);
 
     send_ack(ctx, BOOT_CMD_REBOOT);
     LOG_I(BOOT_TAG, "ACK 已发送，即将系统复位...");

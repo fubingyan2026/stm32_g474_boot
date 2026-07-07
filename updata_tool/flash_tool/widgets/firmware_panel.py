@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (
     QFileDialog, QMessageBox,
 )
 
-from ..protocol import compute_crc32
+from ..protocol import compute_checksum32
 
 
 class FirmwarePanel(QWidget):
@@ -43,7 +43,7 @@ class FirmwarePanel(QWidget):
         fw_info_row = QHBoxLayout()
         self.fw_size_label = QLabel("大小: —")
         fw_info_row.addWidget(self.fw_size_label)
-        self.fw_crc_label = QLabel("CRC32: —")
+        self.fw_crc_label = QLabel("CHECKSUM: —")
         fw_info_row.addWidget(self.fw_crc_label)
         fw_layout.addLayout(fw_info_row)
 
@@ -104,8 +104,8 @@ class FirmwarePanel(QWidget):
 
         with open(path, "rb") as f:
             data = f.read()
-        crc = compute_crc32(data)
-        self.fw_crc_label.setText(f"CRC32: 0x{crc:08X}")
+        checksum = compute_checksum32(data)
+        self.fw_crc_label.setText(f"CHECKSUM: 0x{checksum:08X}")
 
         self.start_btn.setEnabled(True)
 

@@ -1,7 +1,7 @@
 # STM32G474 Bootloader 通信协议规范
 
 > **Document Version**: V1.1.0
-> **Target MCU**: STM32G474RCTx (Cortex-M4, 256KB Flash)
+> **Target MCU**: STM32G474RBTx (Cortex-M4, 128KB Flash)
 > **Transport Layer**: CAN 2.0B / CAN FD (ISO 11898-1:2015)
 > **Last Updated**: 2026-07-07
 
@@ -70,26 +70,26 @@ graph TB
 ```mermaid
 block-beta
     columns 1
-    block:FLASH["256 KB Flash @ 0x08000000"]
+    block:FLASH["128 KB Flash @ 0x08000000"]
         block:Boot["Bootloader 区 (32 KB)"]
             B0["0x08000000"]
             space
             B1["0x08008000"]
         end
-        block:AppA["App A 分区 (100 KB)"]
+        block:AppA["App A 分区 (40 KB)"]
             A0["0x08008000"]
             space
-            A1["0x08021000"]
+            A1["0x08012000"]
         end
-        block:AppB["App B 分区 (100 KB)"]
-            AA0["0x08021000"]
+        block:AppB["App B 分区 (40 KB)"]
+            AA0["0x08012000"]
             space
-            AA1["0x0803A000"]
+            AA1["0x0801C000"]
         end
         block:Meta["Metadata 页 (2 KB)"]
-            M0["0x0803A000"]
+            M0["0x0801C000"]
             space
-            M1["0x0803A800"]
+            M1["0x0801C800"]
         end
     end
 ```
@@ -97,9 +97,9 @@ block-beta
 | 区域 | 起始地址 | 大小 | 说明 |
 |------|----------|------|------|
 | Bootloader | `0x08000000` | 32 KB | 只读，不参与升级。负责校验并引导 App。 |
-| App A | `0x08008000` | 100 KB | 主运行分区。 |
-| App B | `0x08021000` | 100 KB | 备用分区。新固件先写入此分区。 |
-| Metadata | `0x0803A000` | 2 KB | 引导元数据。独立 Flash 页，存放启动参数。 |
+| App A | `0x08008000` | 40 KB | 主运行分区。 |
+| App B | `0x08012000` | 40 KB | 备用分区。新固件先写入此分区。 |
+| Metadata | `0x0801C000` | 2 KB | 引导元数据。独立 Flash 页，存放启动参数。 |
 
 ### 2.1 Metadata 结构体
 
@@ -198,7 +198,7 @@ flowchart TD
     F -->|No| G["NACK: FRAME_SIZE"]
     F -->|Yes| H{"hw_compat_id 匹配?"}
     H -->|No| I["NACK: HW_MISMATCH"]
-    H -->|Yes| J{"0 < fw_total_size <= 100KB?"}
+    H -->|Yes| J{"0 < fw_total_size <= 40KB?"}
     J -->|No| K["NACK: FW_TOO_BIG"]
     J -->|Yes| L["保存协商参数<br/>擦除目标分区 (App A)"]
     L -->|成功| M["ACK: START<br/>→ STATE_START"]
@@ -563,7 +563,7 @@ Frame 16 解析：
 | Block 大小 | 1024 字节 | `BOOT_BLOCK_SIZE` |
 | 支持帧长度 | `{8,12,16,20,24,32,48,64}` | `s_supported_frame_sizes[]` |
 | Bootloader 分区 | 32 KB (`0x8000`) | `boot_flash.h` |
-| App 分区 | 100 KB (`0x19000`) | `boot_flash.h` |
+| App 分区 | 40 KB (`0xA000`) | `boot_flash.h` |
 | Metadata 页 | 2 KB (`0x800`) | `boot_flash.h` |
 | Metadata 魔数 | `0x424F4F54` | `BOOT_METADATA_MAGIC` |
 | 超时时间 | 10 秒 (2000 ticks) | `BOOT_FSM_TIMEOUT_TICKS` |

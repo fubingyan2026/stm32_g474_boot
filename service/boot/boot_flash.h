@@ -22,18 +22,12 @@ extern "C" {
 
 /** Flash 物理参数 */
 #define BOOT_FLASH_BASE         0x08000000U  /**< Flash 起始地址 */
-#define BOOT_FLASH_TOTAL_SIZE   0x40000U     /**< 256 KB */
-#define BOOT_FLASH_PAGE_SIZE    0x800U       /**< 2 KB/页 */
+#define BOOT_FLASH_TOTAL_SIZE   0x20000U     /**< 128 KB */
 
 /** 分区布局 */
-#define BOOT_FLASH_BOOT_SIZE    0x8000U      /**< Bootloader: 32 KB */
-#define BOOT_FLASH_APP_SIZE     0x19000U      /**< App 分区:  100KB */
-#define BOOT_FLASH_META_SIZE    0x800U       /**< Metadata: 2 KB (1 页) */
-
-#define BOOT_FLASH_BOOT_ADDR    BOOT_FLASH_BASE                        /**< 0x08000000 */
-#define BOOT_FLASH_APP_A_ADDR   (BOOT_FLASH_BOOT_ADDR + BOOT_FLASH_BOOT_SIZE) /**< 0x08008000 */
-#define BOOT_FLASH_APP_B_ADDR   (BOOT_FLASH_APP_A_ADDR + BOOT_FLASH_APP_SIZE) /**< 0x08021000 */
-#define BOOT_FLASH_META_ADDR    (BOOT_FLASH_APP_B_ADDR + BOOT_FLASH_APP_SIZE) /**< 0x0803A000 */
+#define BOOT_FLASH_BOOT_SIZE    0x9000U      /**< Bootloader: 36 KB */
+#define BOOT_FLASH_APP_SIZE     0x9000U      /**< App 分区:  108 KB */
+#define BOOT_FLASH_META_SIZE    0x1000U      /**< Metadata: 4 KB (对齐单/双 Bank 最小页) */
 
 /** Metadata 魔数 */
 #define BOOT_METADATA_MAGIC     0x424F4F54U  /**< "BOOT" */
@@ -53,7 +47,7 @@ typedef struct {
     uint8_t  upgrade_flag;     /**< 升级标志：0=正常，1=升级中，2=升级完成待验证 */
     uint16_t version;          /**< 固件版本号 */
     uint32_t fw_size;          /**< 固件大小 */
-    uint32_t fw_crc32;         /**< 固件 CRC32 */
+    uint32_t fw_checksum;      /**< 固件校验和 */
     uint32_t reserved[2];      /**< 预留 */
 } boot_metadata_t;
 
@@ -147,6 +141,17 @@ boot_flash_error_t boot_flash_write_metadata(boot_flash_context_t* ctx,
  */
 boot_flash_error_t boot_flash_compute_crc32(boot_flash_context_t* ctx,
     boot_partition_t partition, uint32_t size, uint32_t* crc32);
+
+/**
+ * @brief 计算指定分区的 32-bit 累加和校验
+ * @param ctx 上下文指针
+ * @param partition 分区标识
+ * @param size 数据大小
+ * @param checksum 输出：32-bit 累加和
+ * @return 操作结果
+ */
+boot_flash_error_t boot_flash_compute_checksum(boot_flash_context_t* ctx,
+    boot_partition_t partition, uint32_t size, uint32_t* checksum);
 
 /**
  * @brief 获取分区起始地址

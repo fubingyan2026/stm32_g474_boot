@@ -10,13 +10,13 @@ from PySide6.QtCore import QObject, Signal, Slot
 from canable_sdk import ZDTCanable, CANFrame
 
 from .protocol import (
-    CAN_ID_HOST_TO_NODE, CAN_ID_NODE_TO_HOST, BLOCK_SIZE,
+    BLOCK_SIZE,
     CMD_START, CMD_METADATA, CMD_DATA, CMD_DATA_END, CMD_VERIFY, CMD_REBOOT,
     CMD_ACK, CMD_NACK,
     STATUS_BLOCK_CHECKSUM,
     build_start, build_metadata, build_data, build_data_end,
     build_verify, build_reboot, parse_header, parse_ack, parse_nack,
-    compute_block_checksum, compute_crc32, block_chunks,
+    compute_block_checksum, compute_checksum32, block_chunks,
     frame_name, status_name,
 )
 
@@ -29,7 +29,8 @@ class FlashConfig:
     def __init__(self, *, fw_path: str, bitrate: int = 1_000_000,
                  hw_compat_id: int = 1, version: int = 1,
                  fd_mode: bool = False, data_bitrate: int = 2_000_000,
-                 max_frame_size: int = 8, serial: Optional[str] = None):
+                 max_frame_size: int = 8, serial: Optional[str] = None,
+                 can_id: int = 0x701):
         self.fw_path = fw_path
         self.bitrate = bitrate
         self.hw_compat_id = hw_compat_id
@@ -38,6 +39,8 @@ class FlashConfig:
         self.data_bitrate = data_bitrate
         self.max_frame_size = max_frame_size
         self.serial = serial
+        self.can_id = can_id          # Host→Node CAN ID
+        self.can_id_resp = can_id + 1  # Node→Host CAN ID
 
 
 class FlashWorker(QObject):
@@ -144,11 +147,11 @@ class FlashWorker(QObject):
 
     def _send(self, data: bytes, frame_size: int):
         frame = CANFrame(
-            can_id=CAN_ID_HOST_TO_NODE,
+            can_id=self._config.can_id,
             data=data.ljust(frame_size, b'\x00'),
             extended=False,
             fd=frame_size > 8,
-            brs=frame_size > 8,
+            brs=False,
         )
         self._bus.send(frame)
 
@@ -161,7 +164,7 @@ class FlashWorker(QObject):
             if remaining <= 0:
                 break
             frame = self._bus.receive(timeout=min(remaining, 0.5))
-            if frame is not None and frame.can_id == CAN_ID_NODE_TO_HOST:
+            if frame is not None and frame.can_id == self._config.can_id_resp:
                 return frame
         return None
 
@@ -212,8 +215,8 @@ class FlashWorker(QObject):
         actual_fw_size = len(fw_data)
         self._log_i("FW", f"文件: {config.fw_path}")
         self._log_i("FW", f"大小: {actual_fw_size} 字节")
-        fw_crc32 = compute_crc32(fw_data)
-        self._log_i("FW", f"CRC32: 0x{fw_crc32:08X}")
+        fw_checksum = compute_checksum32(fw_data)
+        self._log_i("FW", f"Checksum32: 0x{fw_checksum:08X}")
 
         # 拆分 Block
         blocks = block_chunks(fw_data, config.max_frame_size)
@@ -231,7 +234,7 @@ class FlashWorker(QObject):
         self._log_i("PHASE", "握手: START → ACK ✓")
 
         # 发送 METADATA
-        meta_frame = build_metadata(fw_crc32, config.version)
+        meta_frame = build_metadata(fw_checksum, config.version)
         self._send(meta_frame, config.max_frame_size)
         self._wait_ack(CMD_METADATA)
         self._log_i("PHASE", "握手: METADATA → ACK ✓")
@@ -294,13 +297,15 @@ class FlashWorker(QObject):
         self._log_i("PHASE", "校验: VERIFY")
         self._send(build_verify(), config.max_frame_size)
         self._wait_ack(CMD_VERIFY)
-        self._log_i("PHASE", "CRC32 校验通过 ✓")
+        self._log_i("PHASE", "校验和通过 ✓")
 
         self._log_i("PHASE", "提交: REBOOT")
         self._send(build_reboot(), config.max_frame_size)
         resp = self._recv(HANDSHAKE_TIMEOUT)
         if resp is not None and len(resp.data) > 0 and resp.data[0] == CMD_ACK:
             self._log_i("PHASE", "→ ACK ✓")
+        else:
+            raise TimeoutError(f"等待 REBOOT ACK 超时 ({HANDSHAKE_TIMEOUT}s)")
 
         self._log_i("MAIN", "=" * 50)
         self._log_i("MAIN", f"升级完成！({total_blocks} blocks, {actual_fw_size} bytes)")
