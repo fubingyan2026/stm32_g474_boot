@@ -135,8 +135,25 @@ class FirmwarePanel(QWidget):
     @Slot(str)
     def on_log(self, msg: str):
         ts = time.strftime("%H:%M:%S")
-        self.log_text.append(f"[{ts}] {msg}")
-        # 自动滚动到底部
+        level = msg[0] if len(msg) > 1 else "I"
+        rest = msg[2:] if len(msg) > 2 else msg
+
+        level_colors = {
+            "E": "#E53935",
+            "W": "#FDD835",
+            "D": "#4FC3F7",
+            "V": "#888888",
+        }
+        color = level_colors.get(level, "#A5D6A7")
+        ts_color = "#888888"
+
+        html = (f'<span style="color:{color};">{level}</span> '
+                f'<span style="color:{ts_color};">({ts})</span> '
+                f'<span style="color:{color};">{rest}</span>')
+
+        cursor = self.log_text.textCursor()
+        cursor.movePosition(cursor.MoveOperation.End)
+        cursor.insertHtml(html + "<br>")
         scrollbar = self.log_text.verticalScrollBar()
         scrollbar.setValue(scrollbar.maximum())
 

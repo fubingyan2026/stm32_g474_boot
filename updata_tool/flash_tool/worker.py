@@ -45,6 +45,7 @@ class FlashWorker(QObject):
     progress = Signal(int, int)  # current_block, total_blocks
     error_occurred = Signal(str)
     finished = Signal(bool)
+    bus_ready = Signal(object)  # 成功后传出 ZDTCanable 实例
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -59,21 +60,44 @@ class FlashWorker(QObject):
     def start_flash(self, config: FlashConfig):
         self._cancel_requested = False
         self._config = config
+        success = False
         try:
             self._run_flash(config)
+            success = True
+            self.bus_ready.emit(self._bus)
+            self._bus = None  # 转让，不再自己关闭
             self.finished.emit(True)
         except Exception as e:
-            self.log_message.emit(f"[ERROR] {e}")
+            self.log_message.emit(f"E MAIN: {e}")
             self.error_occurred.emit(str(e))
             self.finished.emit(False)
         finally:
-            self._close_bus()
+            if self._bus is not None:
+                try:
+                    self._bus.stop()
+                    if not success:
+                        self._bus.close()
+                        self._bus = None
+                except Exception:
+                    pass
 
     def _log(self, msg: str):
         self.log_message.emit(msg)
 
+    def _log_i(self, tag: str, msg: str):
+        self.log_message.emit(f"I {tag}: {msg}")
+
+    def _log_w(self, tag: str, msg: str):
+        self.log_message.emit(f"W {tag}: {msg}")
+
+    def _log_e(self, tag: str, msg: str):
+        self.log_message.emit(f"E {tag}: {msg}")
+
+    def _log_d(self, tag: str, msg: str):
+        self.log_message.emit(f"D {tag}: {msg}")
+
     def _open_bus(self, config: FlashConfig):
-        self._log(f"[CAN] 扫描设备 (VID=0x1D50, PID=0x606F)...")
+        self._log_i("CAN", "扫描设备 (VID=0x1D50, PID=0x606F)...")
         devs = ZDTCanable.list_devices()
         if not devs:
             raise RuntimeError("未找到 CANable 设备")
@@ -85,31 +109,29 @@ class FlashWorker(QObject):
         else:
             dev = devs[0]
 
-        self._log(f"[CAN] 连接: {dev.get('manufacturer','')} {dev.get('product','')} "
-                  f"S/N={dev.get('serial','?')}")
+        self._log_i("CAN", f"连接: {dev.get('manufacturer','')} {dev.get('product','')} "
+                    f"S/N={dev.get('serial','?')}")
         self._bus = ZDTCanable()
         self._bus.open()
 
-        # 波特率 + FD
         if config.fd_mode:
             self._bus.fd_mode = True
             self._bus.set_data_bitrate(config.data_bitrate)
             self._bus.set_bitrate(config.bitrate)
-            self._log(f"[CAN] FD 模式: 标称={config.bitrate}bps 数据相={config.data_bitrate}bps")
+            self._log_i("CAN", f"FD 模式: 标称={config.bitrate}bps 数据相={config.data_bitrate}bps")
         else:
             self._bus.fd_mode = False
             self._bus.set_bitrate(config.bitrate)
-            self._log(f"[CAN] 经典 CAN: {config.bitrate}bps")
+            self._log_i("CAN", f"经典 CAN: {config.bitrate}bps")
 
         self._bus.start()
         time.sleep(0.1)
-        # 排空 CANable 接收缓冲区中的残留帧（上次失败的 NACK/ACK 等）
         for _ in range(32):
             frame = self._bus.receive(timeout=0.05)
             if frame is None:
                 break
-            self._log(f"[DRAIN] 丢弃残留帧: {frame}")
-        self._log(f"[CAN] 已启动, max_frame_size={config.max_frame_size}")
+            self._log_d("CAN", f"丢弃残留帧: {frame}")
+        self._log_i("CAN", f"已启动, max_frame_size={config.max_frame_size}")
 
     def _close_bus(self):
         if self._bus is not None:
@@ -151,14 +173,14 @@ class FlashWorker(QObject):
         cmd, seq = parse_header(data)
         if cmd == CMD_NACK:
             n_cmd, code = parse_nack(data)
-            self._log(f"[WARN] 收到非预期 NACK [{frame_name(n_cmd)}]: {status_name(code)}, 忽略并重试")
+            self._log_w("MAIN", f"收到非预期 NACK [{frame_name(n_cmd)}]: {status_name(code)}, 忽略并重试")
             return self._wait_ack(expected_cmd, timeout)
         if cmd != CMD_ACK:
-            self._log(f"[WARN] 收到非预期帧: cmd=0x{cmd:02X}, 忽略")
+            self._log_w("MAIN", f"收到非预期帧: cmd=0x{cmd:02X}, 忽略")
             return self._wait_ack(expected_cmd, timeout)
         ack_cmd, status = parse_ack(data)
         if ack_cmd != expected_cmd:
-            self._log(f"[WARN] 收到非预期 ACK: 期望 0x{expected_cmd:02X}, 收到 0x{ack_cmd:02X}, 忽略")
+            self._log_w("MAIN", f"收到非预期 ACK: 期望 0x{expected_cmd:02X}, 收到 0x{ack_cmd:02X}, 忽略")
             return self._wait_ack(expected_cmd, timeout)
         return True
 
@@ -180,42 +202,42 @@ class FlashWorker(QObject):
         return False, None
 
     def _run_flash(self, config: FlashConfig):
-        self._log("=" * 50)
-        self._log("开始固件升级流程")
-        self._log("=" * 50)
+        self._log_i("MAIN", "=" * 50)
+        self._log_i("MAIN", "开始固件升级流程")
+        self._log_i("MAIN", "=" * 50)
 
         # 读取固件
         with open(config.fw_path, "rb") as f:
             fw_data = f.read()
         actual_fw_size = len(fw_data)
-        self._log(f"[FW] 文件: {config.fw_path}")
-        self._log(f"[FW] 大小: {actual_fw_size} 字节")
+        self._log_i("FW", f"文件: {config.fw_path}")
+        self._log_i("FW", f"大小: {actual_fw_size} 字节")
         fw_crc32 = compute_crc32(fw_data)
-        self._log(f"[FW] CRC32: 0x{fw_crc32:08X}")
+        self._log_i("FW", f"CRC32: 0x{fw_crc32:08X}")
 
         # 拆分 Block
         blocks = block_chunks(fw_data, config.max_frame_size)
         total_blocks = len(blocks)
-        self._log(f"[FW] Block 数: {total_blocks} (每块 {BLOCK_SIZE}B)")
+        self._log_i("FW", f"Block 数: {total_blocks} (每块 {BLOCK_SIZE}B)")
 
         # 打开 CAN
         self._open_bus(config)
 
         # ── Phase 1: Handshake ──
-        self._log(f"[PHASE 1] 握手: START")
+        self._log_i("PHASE", "握手: START")
         start_frame = build_start(actual_fw_size, config.hw_compat_id, config.max_frame_size)
         self._send(start_frame, 8)  # START 固定 8 字节
         self._wait_ack(CMD_START)
-        self._log(f"[PHASE 1] 握手: START → ACK ✓")
+        self._log_i("PHASE", "握手: START → ACK ✓")
 
         # 发送 METADATA
         meta_frame = build_metadata(fw_crc32, config.version)
         self._send(meta_frame, config.max_frame_size)
         self._wait_ack(CMD_METADATA)
-        self._log(f"[PHASE 1] 握手: METADATA → ACK ✓")
+        self._log_i("PHASE", "握手: METADATA → ACK ✓")
 
         # ── Phase 2: Data Transfer ──
-        self._log(f"[PHASE 2] 数据传输: {total_blocks} 个 Block")
+        self._log_i("PHASE", f"数据传输: {total_blocks} 个 Block")
         d = config.max_frame_size - 2
 
         for block_idx, block in enumerate(blocks):
@@ -224,15 +246,14 @@ class FlashWorker(QObject):
             self.progress.emit(block_idx, total_blocks)
 
             frames_per_block = (BLOCK_SIZE + d - 1) // d
-            self._log(f"[Block {block_idx+1}/{total_blocks}] "
-                      f"{frames_per_block} 帧 (offset={block_idx * BLOCK_SIZE})")
+            self._log_i("BLOCK", f"{block_idx+1}/{total_blocks} "
+                        f"{frames_per_block} 帧 (offset={block_idx * BLOCK_SIZE})")
 
             retries = 0
             while retries <= MAX_RETRIES:
                 if retries > 0:
-                    self._log(f"[Block {block_idx+1}] 重试 #{retries}")
+                    self._log_i("BLOCK", f"{block_idx+1} 重试 #{retries}")
 
-                # 发送 DATA 帧
                 for seq_idx in range(frames_per_block - 1):
                     chunk = block[seq_idx * d:(seq_idx + 1) * d]
                     raw = build_data(seq_idx, chunk)
@@ -241,7 +262,6 @@ class FlashWorker(QObject):
                     if self._cancel_requested:
                         raise RuntimeError("用户取消")
 
-                # 发送 DATA_END
                 last_start = (frames_per_block - 1) * d
                 remaining = block[last_start:last_start + d]
                 checksum = compute_block_checksum(block)
@@ -250,17 +270,16 @@ class FlashWorker(QObject):
                 if self._cancel_requested:
                     raise RuntimeError("用户取消")
 
-                # 等待 ACK/NACK
                 ack, resp = self._wait_block()
                 if ack:
-                    self._log(f"[Block {block_idx+1}] → ACK ✓")
+                    self._log_i("BLOCK", f"{block_idx+1} → ACK ✓")
                     break
                 else:
                     n_cmd = n_code = None
                     if resp is not None:
                         n_cmd, n_code = parse_nack(resp.data)
                     if n_code == STATUS_BLOCK_CHECKSUM:
-                        self._log(f"[Block {block_idx+1}] NACK: CHECKSUM, 重试")
+                        self._log_i("BLOCK", f"{block_idx+1} NACK: CHECKSUM, 重试")
                         retries += 1
                         continue
                     if resp is None:
@@ -270,21 +289,19 @@ class FlashWorker(QObject):
                         f"{status_name(n_code)} (0x{n_code:02X})")
 
         self.progress.emit(total_blocks, total_blocks)
-        self._log("[PHASE 2] 数据传输完成 ✓")
+        self._log_i("PHASE", "数据传输完成 ✓")
 
-        # ── Phase 3: Verify ──
-        self._log("[PHASE 3] 校验: VERIFY")
+        self._log_i("PHASE", "校验: VERIFY")
         self._send(build_verify(), config.max_frame_size)
         self._wait_ack(CMD_VERIFY)
-        self._log("[PHASE 3] CRC32 校验通过 ✓")
+        self._log_i("PHASE", "CRC32 校验通过 ✓")
 
-        # ── Phase 4: Reboot ──
-        self._log("[PHASE 4] 提交: REBOOT")
+        self._log_i("PHASE", "提交: REBOOT")
         self._send(build_reboot(), config.max_frame_size)
         resp = self._recv(HANDSHAKE_TIMEOUT)
         if resp is not None and len(resp.data) > 0 and resp.data[0] == CMD_ACK:
-            self._log("[PHASE 4] → ACK ✓")
+            self._log_i("PHASE", "→ ACK ✓")
 
-        self._log("=" * 50)
-        self._log(f"升级完成！({total_blocks} blocks, {actual_fw_size} bytes)")
-        self._log("=" * 50)
+        self._log_i("MAIN", "=" * 50)
+        self._log_i("MAIN", f"升级完成！({total_blocks} blocks, {actual_fw_size} bytes)")
+        self._log_i("MAIN", "=" * 50)

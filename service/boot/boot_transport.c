@@ -54,7 +54,7 @@ bool boot_transport_parse_start(const drv_can_msg_t* msg,
     *hw_id   = ((uint16_t)msg->data[5] << 8) | (uint16_t)msg->data[6];
     *max_frame_size = msg->data[7];
 
-    return boot_transport_is_valid_frame_size(*max_frame_size);
+    return true;
 }
 
 bool boot_transport_parse_metadata(const drv_can_msg_t* msg,

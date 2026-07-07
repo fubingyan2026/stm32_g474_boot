@@ -61,6 +61,8 @@ typedef enum {
     BOOT_STATUS_HW_MISMATCH       = 0x08U, /**< 硬件兼容 ID 不匹配 */
     BOOT_STATUS_FLASH_ERASE_ERR   = 0x09U, /**< Flash 擦除失败 */
     BOOT_STATUS_FLASH_READ_ERR    = 0x0AU, /**< Flash 读取失败 */
+    BOOT_STATUS_FRAME_SIZE        = 0x0BU, /**< 帧长度不支持 */
+    BOOT_STATUS_FW_TOO_BIG        = 0x0CU, /**< 固件大小超分区 */
 } boot_status_t;
 
 /* Exported functions prototypes ---------------------------------------------*/

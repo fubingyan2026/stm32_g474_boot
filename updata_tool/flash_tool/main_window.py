@@ -89,6 +89,14 @@ class MainWindow(QMainWindow):
             self.device_panel.set_disconnected()
             return
         try:
+            # 关闭已有的连接（例如上次升级成功后 worker 传回的 bus）
+            if hasattr(self, '_test_bus') and self._test_bus is not None:
+                try:
+                    self._test_bus.close()
+                except Exception:
+                    pass
+                self._test_bus = None
+
             cfg = self.device_panel.get_config_dict()
 
             # 测试连接
@@ -147,8 +155,13 @@ class MainWindow(QMainWindow):
         self.device_panel.scan_btn.setEnabled(False)
         self.device_panel.connect_btn.setEnabled(False)
 
-        # 先停下测试总线
-        self._on_device_disconnect()
+        # 先停下测试总线（不改变 UI 连接状态）
+        if hasattr(self, '_test_bus') and self._test_bus is not None:
+            try:
+                self._test_bus.close()
+            except Exception:
+                pass
+            self._test_bus = None
 
         # 创建工作线程
         self._worker = FlashWorker()
@@ -159,6 +172,7 @@ class MainWindow(QMainWindow):
         self._worker.log_message.connect(self.fw_panel.on_log)
         self._worker.finished.connect(self._on_flash_finished)
         self._worker.error_occurred.connect(self._on_flash_error)
+        self._worker.bus_ready.connect(self._on_bus_ready)
 
         self._worker_thread.started.connect(lambda: self._worker.start_flash(config))
         self._worker_thread.finished.connect(self._worker.deleteLater)
@@ -176,8 +190,12 @@ class MainWindow(QMainWindow):
         self.device_panel.device_list.setEnabled(True)
         self.device_panel.scan_btn.setEnabled(True)
         self.device_panel.connect_btn.setEnabled(True)
-        self.device_panel.set_disconnected()
-        self.status_label.setText("升级完成" if success else "升级失败")
+        if success:
+            self.device_panel.set_connected()
+            self.status_label.setText("升级完成 (USB 保持连接)")
+        else:
+            self.device_panel.set_disconnected()
+            self.status_label.setText("升级失败")
 
         if self._worker_thread is not None:
             self._worker_thread.quit()
@@ -187,6 +205,15 @@ class MainWindow(QMainWindow):
 
     def _on_flash_error(self, msg: str):
         self.fw_panel.on_log(f"[ERROR] {msg}")
+
+    def _on_bus_ready(self, bus):
+        """Worker 成功后传回 ZDTCanable 实例，主窗口接管。"""
+        if hasattr(self, '_test_bus') and self._test_bus is not None:
+            try:
+                self._test_bus.close()
+            except Exception:
+                pass
+        self._test_bus = bus
 
     def _show_about(self):
         QMessageBox.about(self, "关于",

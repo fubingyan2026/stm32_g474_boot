@@ -17,7 +17,7 @@
 
 /** 上位机 TAG */
 #define BOOT_TAG "boot_fsm"
-
+#define FSM_CYCLE_MS 1
 /* Private variables ---------------------------------------------------------*/
 
 /* 待处理消息（在 handler 中访问） */
@@ -72,11 +72,11 @@ bool boot_fsm_init(boot_fsm_context_t* ctx, void* fsm_instance,
     ctx->fsm = fsm;
 
     /* 设置状态处理器 */
-    s_handlers[BOOT_STATE_IDLE]            = handler_idle;
-    s_handlers[BOOT_STATE_START]           = handler_start;
-    s_handlers[BOOT_STATE_DATA_TRANSFER]   = handler_data_transfer;
-    s_handlers[BOOT_STATE_VERIFY_PENDING]  = handler_verify_pending;
-    s_handlers[BOOT_STATE_REBOOT_PENDING]  = handler_reboot_pending;
+    s_handlers[BOOT_STATE_IDLE] = handler_idle;
+    s_handlers[BOOT_STATE_START] = handler_start;
+    s_handlers[BOOT_STATE_DATA_TRANSFER] = handler_data_transfer;
+    s_handlers[BOOT_STATE_VERIFY_PENDING] = handler_verify_pending;
+    s_handlers[BOOT_STATE_REBOOT_PENDING] = handler_reboot_pending;
 
     /* 组装 fsm 配置 */
     fsm_cfg.handlers = s_handlers;
@@ -139,7 +139,7 @@ void boot_fsm_tick(boot_fsm_context_t* ctx)
         return;
     }
 
-    ctx->tick_count++;
+    ctx->tick_count += FSM_CYCLE_MS;
 
     /* 检查超时：IDLE 状态不超时 */
     if (fsm_current_state((fsm_t*)ctx->fsm) == BOOT_STATE_IDLE) {
@@ -148,8 +148,8 @@ void boot_fsm_tick(boot_fsm_context_t* ctx)
     }
 
     elapsed = ctx->tick_count - ctx->last_activity_tick;
-    if (elapsed > BOOT_FSM_TIMEOUT_TICKS) {
-        LOG_W(BOOT_TAG, "超时: 10 秒无活动，复位到 IDLE");
+    if (elapsed > BOOT_FSM_TIMEOUT_MS) {
+        LOG_W(BOOT_TAG, "超时: %d (毫秒)无活动，复位到 IDLE",elapsed);
         /* 超时：复位到 IDLE */
         fsm_goto((fsm_t*)ctx->fsm, BOOT_STATE_IDLE);
         ctx->last_activity_tick = ctx->tick_count;
@@ -220,11 +220,26 @@ static fsm_state_t handler_idle(fsm_t* fsm)
 
     LOG_I(BOOT_TAG, "收到 START 帧");
 
-    if (!boot_transport_parse_start(s_pending_msg, &fw_size, &hw_id, &max_frame_size)) {
+    /* 先解帧内容（不含 max_frame_size 校验） */
+    uint32_t tmp_fw_size;
+    uint16_t tmp_hw_id;
+    uint8_t tmp_frame_size;
+    if (!boot_transport_parse_start(s_pending_msg, &tmp_fw_size, &tmp_hw_id, &tmp_frame_size)) {
         LOG_E(BOOT_TAG, "START 帧格式无效，拒绝");
         send_nack(ctx, BOOT_CMD_START, BOOT_STATUS_INVALID_FRAME);
         return BOOT_STATE_IDLE;
     }
+
+    /* 单独校验帧长度是否支持 */
+    if (!boot_transport_is_valid_frame_size(tmp_frame_size)) {
+        LOG_E(BOOT_TAG, "帧长度不支持: %u", tmp_frame_size);
+        send_nack(ctx, BOOT_CMD_START, BOOT_STATUS_FRAME_SIZE);
+        return BOOT_STATE_IDLE;
+    }
+
+    fw_size = tmp_fw_size;
+    hw_id = tmp_hw_id;
+    max_frame_size = tmp_frame_size;
 
     LOG_I(BOOT_TAG, "START: fw_size=%u, hw_id=0x%04X, max_frame_size=%u",
         fw_size, hw_id, max_frame_size);
@@ -238,9 +253,14 @@ static fsm_state_t handler_idle(fsm_t* fsm)
     }
 
     /* 校验固件大小不超过分区 */
-    if (fw_size == 0U || fw_size > BOOT_FLASH_APP_SIZE) {
-        LOG_E(BOOT_TAG, "固件大小越界: %u (上限 %u)", fw_size, BOOT_FLASH_APP_SIZE);
+    if (fw_size == 0U) {
+        LOG_E(BOOT_TAG, "固件大小为 0,拒绝");
         send_nack(ctx, BOOT_CMD_START, BOOT_STATUS_INVALID_FRAME);
+        return BOOT_STATE_IDLE;
+    }
+    if (fw_size > BOOT_FLASH_APP_SIZE) {
+        LOG_E(BOOT_TAG, "固件太大: %u (分区上限 %u)", fw_size, BOOT_FLASH_APP_SIZE);
+        send_nack(ctx, BOOT_CMD_START, BOOT_STATUS_FW_TOO_BIG);
         return BOOT_STATE_IDLE;
     }
 
@@ -400,7 +420,8 @@ static fsm_state_t handler_data_transfer(fsm_t* fsm)
         /* Block 校验通过：写入 Flash */
         if (ctx->config.write_block_cb(ctx->config.user_data,
                 ctx->total_received, ctx->ram_block_buffer,
-                BOOT_BLOCK_SIZE) != 0U) {
+                BOOT_BLOCK_SIZE)
+            != 0U) {
             LOG_E(BOOT_TAG, "Flash 写入失败, offset=%u", ctx->total_received);
             send_nack(ctx, BOOT_CMD_DATA_END, BOOT_STATUS_FLASH_WRITE_ERR);
             return BOOT_STATE_IDLE;
@@ -409,7 +430,8 @@ static fsm_state_t handler_data_transfer(fsm_t* fsm)
         /* Flash 读回校验 */
         if (ctx->config.verify_block_cb(ctx->config.user_data,
                 ctx->total_received, ctx->ram_block_buffer,
-                BOOT_BLOCK_SIZE) != 0U) {
+                BOOT_BLOCK_SIZE)
+            != 0U) {
             LOG_E(BOOT_TAG, "Flash 读回校验失败, offset=%u", ctx->total_received);
             send_nack(ctx, BOOT_CMD_DATA_END, BOOT_STATUS_FLASH_VERIFY_ERR);
             return BOOT_STATE_IDLE;
@@ -461,7 +483,8 @@ static fsm_state_t handler_verify_pending(fsm_t* fsm)
 
     /* 计算整包 CRC32 */
     if (ctx->config.verify_fw_cb(ctx->config.user_data,
-            ctx->fw_total_size, &calculated_crc32) != 0U) {
+            ctx->fw_total_size, &calculated_crc32)
+        != 0U) {
         LOG_E(BOOT_TAG, "Flash 读取失败，无法计算 CRC32");
         send_nack(ctx, BOOT_CMD_VERIFY, BOOT_STATUS_FLASH_READ_ERR);
         return BOOT_STATE_IDLE;

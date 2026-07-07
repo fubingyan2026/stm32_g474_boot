@@ -59,8 +59,8 @@ typedef void (*boot_fsm_reset_cb_t)(void* user_data);
 
 /* Exported constants --------------------------------------------------------*/
 
-/** 超时定义（tick 次数，每 tick = 5ms） */
-#define BOOT_FSM_TIMEOUT_TICKS  2000U  /**< 10 秒超时 */
+/** 超时定义（ms） */
+#define BOOT_FSM_TIMEOUT_MS  3000U  /**< 3000 毫秒超时 */
 
 /* Exported functions prototypes ---------------------------------------------*/
 
