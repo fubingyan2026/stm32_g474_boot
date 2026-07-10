@@ -60,7 +60,8 @@ typedef void (*boot_fsm_reset_cb_t)(void* user_data);
 /* Exported constants --------------------------------------------------------*/
 
 /** 超时定义（ms） */
-#define BOOT_FSM_TIMEOUT_MS  3000U  /**< 3000 毫秒超时 */
+#define BOOT_FSM_TIMEOUT_MS  6000U  /**< 6000 毫秒全局会话超时 */
+#define BOOT_BLOCK_TIMEOUT_MS  100U /**< Block 帧间隔超时（ms，协议 V1.3.0 常量） */
 
 /* Exported functions prototypes ---------------------------------------------*/
 
@@ -103,6 +104,11 @@ struct boot_fsm_context {
     uint16_t block_accumulated_len; /**< 当前 Block 已累积字节数 */
     uint32_t total_received;        /**< 已接收总字节数 */
     uint8_t  expected_seq;          /**< 期望的下一个 DATA 帧序号 */
+    uint16_t expected_block_index;  /**< 期望的下一个 Block 序号（DATA_START 对齐） */
+
+    /* 块级局部看门狗 */
+    uint32_t last_block_tick;       /**< 当前 Block 最近一帧的 tick（帧间隔计时基准） */
+    bool     block_active;          /**< 当前 Block 是否处于活跃接收（看门狗使能标志） */
 
     /* 超时管理 */
     uint32_t last_activity_tick;    /**< 最后活动的 tick 值 */

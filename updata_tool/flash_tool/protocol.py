@@ -17,6 +17,8 @@ CMD_METADATA = 0x02
 CMD_DATA = 0x03
 CMD_VERIFY = 0x04
 CMD_REBOOT = 0x05
+CMD_CANCEL = 0x06
+CMD_DATA_START = 0x07
 CMD_DATA_END = 0x08
 CMD_ACK = 0x10
 CMD_NACK = 0x11
@@ -35,6 +37,7 @@ STATUS_FLASH_ERASE_ERR = 0x09
 STATUS_FLASH_READ_ERR = 0x0A
 STATUS_FRAME_SIZE = 0x0B
 STATUS_FW_TOO_BIG = 0x0C
+STATUS_BLOCK_INDEX_MISMATCH = 0x0D
 
 STATUS_NAMES = {
     0x00: "OK",
@@ -50,6 +53,7 @@ STATUS_NAMES = {
     0x0A: "FLASH_READ_ERR",
     0x0B: "FRAME_SIZE",
     0x0C: "FW_TOO_BIG",
+    0x0D: "BLOCK_INDEX_MISMATCH",
 }
 
 CMD_NAMES = {
@@ -58,6 +62,8 @@ CMD_NAMES = {
     0x03: "DATA",
     0x04: "VERIFY",
     0x05: "REBOOT",
+    0x06: "CANCEL",
+    0x07: "DATA_START",
     0x08: "DATA_END",
     0x10: "ACK",
     0x11: "NACK",
@@ -117,6 +123,15 @@ def build_data(seq: int, payload: bytes) -> bytes:
     return struct.pack(">BB", CMD_DATA, seq) + payload
 
 
+def build_data_start(block_index: int) -> bytes:
+    """构造 DATA_START 帧 (8 字节经典 CAN 帧)。
+
+    [0x07][reserved(1B)=0][block_index(2B BE)][padding]
+    block_index 固定在 Byte 2-3（大端序），调用方将帧补齐到 8 字节。
+    """
+    return struct.pack(">BBH", CMD_DATA_START, 0, block_index)
+
+
 def build_data_end(seq: int, checksum: int, remaining_data: bytes) -> bytes:
     """构造 DATA_END 帧。
 
@@ -132,6 +147,11 @@ def build_verify() -> bytes:
 
 def build_reboot() -> bytes:
     return bytes([CMD_REBOOT, 0x00])
+
+
+def build_cancel() -> bytes:
+    """构造 CANCEL 帧：通知节点安全退回 IDLE。[0x06][0x00]"""
+    return bytes([CMD_CANCEL, 0x00])
 
 
 # ── 响应解析器 ──
@@ -163,6 +183,17 @@ def parse_nack(data: bytes) -> tuple[int, int]:
     cmd = data[1]
     error_code = data[2] if len(data) > 2 else 0
     return cmd, error_code
+
+
+def parse_nack_block_index(data: bytes) -> Optional[int]:
+    """解析 NACK(BLOCK_INDEX_MISMATCH) 负载中的期望块号。
+
+    格式：[0x11][cmd][error_code][idx_H][idx_L][填充]
+    返回 Byte 3-4 的 uint16（大端序）；长度不足时返回 None。
+    """
+    if len(data) < 5:
+        return None
+    return int.from_bytes(data[3:5], "big")
 
 
 def is_response_ack(data: bytes, expected_cmd: int) -> bool:

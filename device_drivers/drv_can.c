@@ -230,3 +230,44 @@ drv_can_error_t drv_can_register_rx_callback(drv_can_channel_t ch,
     s_ctx[ch].rx_callback = callback;
     return DRV_CAN_OK;
 }
+
+/* --- Bus-Off 检测 / 自恢复 --- */
+
+bool drv_can_is_bus_off(drv_can_channel_t ch)
+{
+    if (ch >= DRV_CAN_CH_NUM || !s_ctx[ch].initialized) {
+        return false;
+    }
+
+    FDCAN_ProtocolStatusTypeDef status;
+    if (HAL_FDCAN_GetProtocolStatus(s_ctx[ch].hfdcan, &status) != HAL_OK) {
+        return false;
+    }
+    return status.BusOff != 0U;
+}
+
+drv_can_error_t drv_can_recover(drv_can_channel_t ch)
+{
+    if (ch >= DRV_CAN_CH_NUM) {
+        return DRV_CAN_ERROR_INVALID_PARAM;
+    }
+    if (!s_ctx[ch].initialized) {
+        return DRV_CAN_ERROR_UNINITIALIZED;
+    }
+    if (!drv_can_is_bus_off(ch)) {
+        return DRV_CAN_OK; /* 未处于 Bus-Off，无需恢复 */
+    }
+
+    FDCAN_HandleTypeDef* h = s_ctx[ch].hfdcan;
+
+    /* Stop 置 CCCR.INIT 并回到 READY，Start 清 INIT 触发内核 128×11 隐性位恢复。
+       message RAM 内的滤波器与全局滤波配置保持不变，rx_callback 亦不受影响。 */
+    HAL_FDCAN_Stop(h);
+    if (HAL_FDCAN_Start(h) != HAL_OK) {
+        return DRV_CAN_ERROR_BUS_OFF;
+    }
+
+    /* 重新激活 RX FIFO0 通知（保险起见，Stop 不清 IE） */
+    HAL_FDCAN_ActivateNotification(h, FDCAN_IT_RX_FIFO0_NEW_MESSAGE, 0);
+    return DRV_CAN_OK;
+}

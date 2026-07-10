@@ -93,6 +93,17 @@ void boot_transport_parse_data_end(const drv_can_msg_t* msg,
     *remaining_data = &msg->data[4];
 }
 
+bool boot_transport_parse_data_start(const drv_can_msg_t* msg, uint16_t* block_index)
+{
+    /* DATA_START：cmd(1) + reserved(1) + block_index(2)，最少 4 字节 */
+    if (msg->dlc < 4U) {
+        return false;
+    }
+    /* block_index 固定在 Byte 2-3（大端序） */
+    *block_index = ((uint16_t)msg->data[2] << 8) | (uint16_t)msg->data[3];
+    return true;
+}
+
 uint16_t boot_transport_compute_block_checksum(const uint8_t* data, uint32_t len)
 {
     uint16_t sum = 0U;
@@ -123,4 +134,22 @@ void boot_transport_build_nack(drv_can_msg_t* msg, uint8_t cmd, uint8_t error_co
     msg->data[1] = cmd;        /* 对哪个命令的否定应答 */
     msg->data[2] = error_code; /* 错误码 */
     msg->dlc = 8U;
+}
+
+void boot_transport_build_ack_idx(drv_can_msg_t* msg, uint8_t cmd,
+    uint8_t status, uint16_t block_index)
+{
+    boot_transport_build_ack(msg, cmd, status);
+    /* Byte 3-4 回带已确认块号（大端序） */
+    msg->data[3] = (uint8_t)(block_index >> 8);
+    msg->data[4] = (uint8_t)(block_index & 0xFFU);
+}
+
+void boot_transport_build_nack_idx(drv_can_msg_t* msg, uint8_t cmd,
+    uint8_t error_code, uint16_t block_index)
+{
+    boot_transport_build_nack(msg, cmd, error_code);
+    /* Byte 3-4 回带板端期望块号（大端序） */
+    msg->data[3] = (uint8_t)(block_index >> 8);
+    msg->data[4] = (uint8_t)(block_index & 0xFFU);
 }

@@ -43,6 +43,8 @@ typedef enum {
     BOOT_CMD_DATA      = 0x03U, /**< 数据帧（上位机 → 板卡） */
     BOOT_CMD_VERIFY    = 0x04U, /**< 校验请求 */
     BOOT_CMD_REBOOT    = 0x05U, /**< 复位重启 */
+    BOOT_CMD_CANCEL    = 0x06U, /**< 取消升级，安全退回 IDLE（上位机 → 板卡） */
+    BOOT_CMD_DATA_START = 0x07U, /**< 块传输启动帧（上位机 → 板卡，携带 block_index） */
     BOOT_CMD_DATA_END  = 0x08U, /**< 分块尾帧 */
     BOOT_CMD_ACK       = 0x10U, /**< 应答（板卡 → 上位机） */
     BOOT_CMD_NACK      = 0x11U, /**< 否定应答（板卡 → 上位机） */
@@ -63,6 +65,7 @@ typedef enum {
     BOOT_STATUS_FLASH_READ_ERR    = 0x0AU, /**< Flash 读取失败 */
     BOOT_STATUS_FRAME_SIZE        = 0x0BU, /**< 帧长度不支持 */
     BOOT_STATUS_FW_TOO_BIG        = 0x0CU, /**< 固件大小超分区 */
+    BOOT_STATUS_BLOCK_INDEX_MISMATCH = 0x0DU, /**< 块号不匹配，负载回带期望块号 */
 } boot_status_t;
 
 /* Exported functions prototypes ---------------------------------------------*/
@@ -143,6 +146,14 @@ void boot_transport_parse_data_end(const drv_can_msg_t* msg,
     const uint8_t** remaining_data, uint8_t* rem_len);
 
 /**
+ * @brief 解析 DATA_START 帧，提取块号
+ * @param msg CAN 消息
+ * @param block_index 输出：块号（uint16, 从 Byte 2-3 大端读取）
+ * @return true 表示帧格式有效（dlc >= 4）
+ */
+bool boot_transport_parse_data_start(const drv_can_msg_t* msg, uint16_t* block_index);
+
+/**
  * @brief 计算 1KB Block 的 16 位累加和校验
  * @param data 数据缓冲区
  * @param len 数据长度
@@ -165,6 +176,26 @@ void boot_transport_build_ack(drv_can_msg_t* msg, uint8_t cmd, uint8_t status);
  * @param error_code 错误码
  */
 void boot_transport_build_nack(drv_can_msg_t* msg, uint8_t cmd, uint8_t error_code);
+
+/**
+ * @brief 构造携带块号的 ACK 帧（用于 DATA_START 应答）
+ * @param msg 输出：CAN 消息
+ * @param cmd 应答的命令字
+ * @param status 状态码
+ * @param block_index 已确认的块号（写入 Byte 3-4，大端序）
+ */
+void boot_transport_build_ack_idx(drv_can_msg_t* msg, uint8_t cmd,
+    uint8_t status, uint16_t block_index);
+
+/**
+ * @brief 构造携带块号的 NACK 帧（用于 DATA_START 应答）
+ * @param msg 输出：CAN 消息
+ * @param cmd 否定应答的命令字
+ * @param error_code 错误码
+ * @param block_index 板端期望的块号（写入 Byte 3-4，大端序）
+ */
+void boot_transport_build_nack_idx(drv_can_msg_t* msg, uint8_t cmd,
+    uint8_t error_code, uint16_t block_index);
 
 #ifdef __cplusplus
 }

@@ -31,6 +31,9 @@
 /** 主循环轮询周期 (ms) */
 #define BOOT_TASK_PERIOD_MS 1U
 
+/** Bus-Off 轮询周期 (ms)，以主循环周期为 tick 累加 */
+#define BOOT_BUSOFF_POLL_MS 100U
+
 /* Private variables ---------------------------------------------------------*/
 
 /* CAN 消息队列 */
@@ -49,6 +52,9 @@ static sw_timer_t s_timer;
 
 /* 目标分区 */
 static boot_partition_t s_target_partition = BOOT_PARTITION_A;
+
+/* Bus-Off 轮询降频计数器 */
+static uint32_t s_busoff_poll_tick = 0U;
 
 /* Private function prototypes -----------------------------------------------*/
 
@@ -239,6 +245,21 @@ static void boot_timer_cb(void* user_data)
 
     /* 更新超时 */
     boot_fsm_tick(&s_fsm_ctx);
+
+    /* 补发 tick 内生成的响应（如块级看门狗超时 NACK） */
+    if (boot_fsm_get_response(&s_fsm_ctx, &response)) {
+        drv_can_send(DRV_CAN_CH_1, &response);
+    }
+
+    /* CAN Bus-Off 自恢复：每 ~100ms 轮询一次 */
+    s_busoff_poll_tick++;
+    if (s_busoff_poll_tick >= BOOT_BUSOFF_POLL_MS) {
+        s_busoff_poll_tick = 0U;
+        if (drv_can_is_bus_off(DRV_CAN_CH_1)) {
+            LOG_W(BOOT_TAG, "检测到 CAN Bus-Off，自动恢复");
+            drv_can_recover(DRV_CAN_CH_1);
+        }
+    }
 }
 
 /* ===== 回调函数实现 ======================================================= */

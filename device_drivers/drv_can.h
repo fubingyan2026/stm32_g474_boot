@@ -42,6 +42,7 @@ typedef enum {
     DRV_CAN_ERROR_UNINITIALIZED,
     DRV_CAN_ERROR_TX_BUSY,
     DRV_CAN_ERROR_INVALID_PARAM,
+    DRV_CAN_ERROR_BUS_OFF,
 } drv_can_error_t;
 
 /**
@@ -120,6 +121,24 @@ bool drv_can_tx_ready(drv_can_channel_t ch);
  */
 drv_can_error_t drv_can_register_rx_callback(drv_can_channel_t ch,
     drv_can_rx_callback_t callback);
+
+/* --- Bus-Off 检测 / 自恢复 --- */
+
+/**
+ * @brief 查询通道是否处于 Bus-Off 状态
+ * @param ch 通道号
+ * @return true=处于 Bus-Off（内核已置 CCCR.INIT 离线）
+ */
+bool drv_can_is_bus_off(drv_can_channel_t ch);
+
+/**
+ * @brief 从 Bus-Off 自动恢复（保留滤波器与接收回调）
+ * @param ch 通道号
+ * @return DRV_CAN_OK 表示已恢复或本就无需恢复
+ * @note  内部经 HAL_FDCAN_Stop/Start 清 CCCR.INIT，触发内核 128×11 隐性位恢复，
+ *        无需芯片复位。建议在周期任务中检测到 bus-off 时调用。
+ */
+drv_can_error_t drv_can_recover(drv_can_channel_t ch);
 
 #ifdef __cplusplus
 }

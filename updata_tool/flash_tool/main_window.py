@@ -129,6 +129,12 @@ class MainWindow(QMainWindow):
         self.status_label.setText("未连接")
 
     def _on_start_flash(self):
+        # 以真实运行状态（_worker）为唯一判据：已有升级在进行时，本次点击一律当作取消，
+        # 而不是又开一轮（兜底面板按钮状态脱同步的情况）。
+        if self._worker is not None:
+            self._on_stop_flash()
+            return
+
         if not self.device_panel._connected:
             QMessageBox.warning(self, "警告", "请先连接 CAN 设备")
             return
@@ -166,6 +172,7 @@ class MainWindow(QMainWindow):
 
         # 创建工作线程
         self._worker = FlashWorker()
+        self._worker._config = config  # 启动前设置，供无参 start_flash 读取
         self._worker_thread = QThread(self)
         self._worker.moveToThread(self._worker_thread)
 
@@ -175,7 +182,9 @@ class MainWindow(QMainWindow):
         self._worker.error_occurred.connect(self._on_flash_error)
         self._worker.bus_ready.connect(self._on_bus_ready)
 
-        self._worker_thread.started.connect(lambda: self._worker.start_flash(config))
+        # 关键：直接连到 worker 的绑定槽（worker 已 moveToThread → 在 worker 线程执行）。
+        # 切勿用 lambda，否则会被派发回 GUI 线程执行，升级期间界面卡死、无法取消。
+        self._worker_thread.started.connect(self._worker.start_flash)
         self._worker_thread.finished.connect(self._worker.deleteLater)
         self._worker_thread.finished.connect(self._worker_thread.deleteLater)
 
@@ -183,6 +192,8 @@ class MainWindow(QMainWindow):
 
     def _on_stop_flash(self):
         if self._worker is not None:
+            self.fw_panel.on_log("W MAIN: 请求取消升级…（将通知节点退回 IDLE）")
+            self.fw_panel.set_cancelling()
             self._worker.cancel()
 
     def _on_flash_finished(self, success: bool):

@@ -34,6 +34,9 @@ static fsm_state_t handler_reboot_pending(fsm_t* fsm);
 /* 辅助函数 */
 static void send_ack(boot_fsm_context_t* ctx, uint8_t cmd);
 static void send_nack(boot_fsm_context_t* ctx, uint8_t cmd, uint8_t error);
+static void send_ack_idx(boot_fsm_context_t* ctx, uint8_t cmd, uint16_t block_index);
+static void send_nack_idx(boot_fsm_context_t* ctx, uint8_t cmd,
+    uint8_t error, uint16_t block_index);
 static void reset_transfer_state(boot_fsm_context_t* ctx);
 static bool validate_msg_id(const drv_can_msg_t* msg);
 
@@ -126,6 +129,21 @@ void boot_fsm_process_msg(boot_fsm_context_t* ctx, const drv_can_msg_t* msg)
     /* 设置全局待处理消息指针，供 handler 访问 */
     s_pending_msg = msg;
 
+    /* 取消命令：任意状态安全退回 IDLE（备用分区未提交，主分区完好） */
+    {
+        uint8_t cmd, seq;
+        boot_transport_parse_header(msg, &cmd, &seq);
+        if (cmd == BOOT_CMD_CANCEL) {
+            LOG_W(BOOT_TAG, "收到 CANCEL，安全退回 IDLE");
+            reset_transfer_state(ctx);
+            ctx->block_active = false;
+            send_ack(ctx, BOOT_CMD_CANCEL);
+            fsm_goto((fsm_t*)ctx->fsm, BOOT_STATE_IDLE);
+            s_pending_msg = NULL;
+            return;
+        }
+    }
+
     /* 驱动状态机 */
     fsm_step((fsm_t*)ctx->fsm);
 
@@ -145,6 +163,21 @@ void boot_fsm_tick(boot_fsm_context_t* ctx)
     if (fsm_current_state((fsm_t*)ctx->fsm) == BOOT_STATE_IDLE) {
         ctx->last_activity_tick = ctx->tick_count;
         return;
+    }
+
+    /* 块级局部看门狗：DATA_TRANSFER 活跃期帧间隔溢出 → 即时 NACK(TIMEOUT) + 安全等待 */
+    if (fsm_current_state((fsm_t*)ctx->fsm) == BOOT_STATE_DATA_TRANSFER
+        && ctx->block_active
+        && (ctx->tick_count - ctx->last_block_tick) > BOOT_BLOCK_TIMEOUT_MS) {
+        LOG_W(BOOT_TAG, "块级看门狗超时(%ums)，回带期望块号 %u，退回安全等待",
+            BOOT_BLOCK_TIMEOUT_MS, ctx->expected_block_index);
+        send_nack_idx(ctx, BOOT_CMD_DATA_END,
+            BOOT_STATUS_TIMEOUT, ctx->expected_block_index);
+        /* 复位当前块局部状态，只报一次（block_active 清零），等待 Host 重发 DATA_START */
+        ctx->block_accumulated_len = 0U;
+        ctx->expected_seq = 0U;
+        ctx->block_active = false;
+        /* 不刷新 last_activity_tick：全局会话超时独立计时 */
     }
 
     elapsed = ctx->tick_count - ctx->last_activity_tick;
@@ -190,11 +223,25 @@ static void send_nack(boot_fsm_context_t* ctx, uint8_t cmd, uint8_t error)
     ctx->has_response = true;
 }
 
+static void send_ack_idx(boot_fsm_context_t* ctx, uint8_t cmd, uint16_t block_index)
+{
+    boot_transport_build_ack_idx(&ctx->response_msg, cmd, BOOT_STATUS_OK, block_index);
+    ctx->has_response = true;
+}
+
+static void send_nack_idx(boot_fsm_context_t* ctx, uint8_t cmd,
+    uint8_t error, uint16_t block_index)
+{
+    boot_transport_build_nack_idx(&ctx->response_msg, cmd, error, block_index);
+    ctx->has_response = true;
+}
+
 static void reset_transfer_state(boot_fsm_context_t* ctx)
 {
     ctx->block_accumulated_len = 0U;
     ctx->total_received = 0U;
     ctx->expected_seq = 0U;
+    ctx->expected_block_index = 0U;
     memset(ctx->ram_block_buffer, 0, sizeof(ctx->ram_block_buffer));
 }
 
@@ -347,14 +394,49 @@ static fsm_state_t handler_data_transfer(fsm_t* fsm)
 
     boot_transport_parse_header(s_pending_msg, &cmd, &seq);
 
+    if (cmd == BOOT_CMD_DATA_START) {
+        uint16_t block_index = 0U;
+        if (!boot_transport_parse_data_start(s_pending_msg, &block_index)) {
+            LOG_E(BOOT_TAG, "DATA_START 帧格式无效");
+            send_nack_idx(ctx, BOOT_CMD_DATA_START,
+                BOOT_STATUS_INVALID_FRAME, ctx->expected_block_index);
+            return BOOT_STATE_DATA_TRANSFER;
+        }
+
+        if (block_index != ctx->expected_block_index) {
+            LOG_W(BOOT_TAG, "块号不匹配: 期望 %u, 收到 %u，回带期望块号",
+                ctx->expected_block_index, block_index);
+            send_nack_idx(ctx, BOOT_CMD_DATA_START,
+                BOOT_STATUS_BLOCK_INDEX_MISMATCH, ctx->expected_block_index);
+            return BOOT_STATE_DATA_TRANSFER;
+        }
+
+        /* 块号匹配：初始化 RAM 接收区，重置局部状态（不动 total_received / expected_block_index） */
+        ctx->block_accumulated_len = 0U;
+        ctx->expected_seq = 0U;
+        memset(ctx->ram_block_buffer, 0, sizeof(ctx->ram_block_buffer));
+
+        /* 激活块级看门狗 */
+        ctx->block_active = true;
+        ctx->last_block_tick = ctx->tick_count;
+
+        LOG_D(BOOT_TAG, "DATA_START: block_index=%u，接收区就绪", block_index);
+        send_ack_idx(ctx, BOOT_CMD_DATA_START, ctx->expected_block_index);
+        return BOOT_STATE_DATA_TRANSFER;
+    }
+
     if (cmd == BOOT_CMD_DATA) {
         boot_transport_parse_data(s_pending_msg, &seq, &payload, &payload_len);
         d = boot_transport_payload_size(ctx->max_frame_size);
 
-        /* 序号检查 */
+        /* 序号检查：错序即时拦截，回带当前期望块号，令 Host 经 DATA_START 重新对齐 */
         if (seq != ctx->expected_seq) {
-            LOG_W(BOOT_TAG, "DATA 序号错乱: 期望 %u, 收到 %u", ctx->expected_seq, seq);
-            send_nack(ctx, BOOT_CMD_DATA, BOOT_STATUS_INVALID_FRAME);
+            LOG_W(BOOT_TAG, "DATA 序号错乱: 期望 %u, 收到 %u，即时 NACK", ctx->expected_seq, seq);
+            send_nack_idx(ctx, BOOT_CMD_DATA,
+                BOOT_STATUS_INVALID_FRAME, ctx->expected_block_index);
+            /* 复位当前块局部状态，等待 Host 重发 DATA_START */
+            ctx->block_accumulated_len = 0U;
+            ctx->block_active = false;
             return BOOT_STATE_DATA_TRANSFER;
         }
 
@@ -366,6 +448,10 @@ static fsm_state_t handler_data_transfer(fsm_t* fsm)
         }
         ctx->expected_seq++;
 
+        /* 刷新块级看门狗 */
+        ctx->block_active = true;
+        ctx->last_block_tick = ctx->tick_count;
+
         LOG_D(BOOT_TAG, "DATA seq=%u, len=%u, accumulated=%u",
             seq, payload_len, ctx->block_accumulated_len);
 
@@ -373,8 +459,10 @@ static fsm_state_t handler_data_transfer(fsm_t* fsm)
         if (ctx->block_accumulated_len >= BOOT_BLOCK_SIZE) {
             /* 不应在 DATA 帧就满，必须等 DATA_END */
             LOG_W(BOOT_TAG, "BUFFER 已满但未收到 DATA_END，复位");
-            send_nack(ctx, BOOT_CMD_DATA, BOOT_STATUS_INVALID_FRAME);
+            send_nack_idx(ctx, BOOT_CMD_DATA,
+                BOOT_STATUS_INVALID_FRAME, ctx->expected_block_index);
             ctx->block_accumulated_len = 0U;
+            ctx->block_active = false;
             return BOOT_STATE_DATA_TRANSFER;
         }
 
@@ -438,8 +526,10 @@ static fsm_state_t handler_data_transfer(fsm_t* fsm)
         }
 
         ctx->total_received += BOOT_BLOCK_SIZE;
+        ctx->expected_block_index++;
         ctx->block_accumulated_len = 0U;
         ctx->expected_seq = 0U;
+        ctx->block_active = false;   /* 块提交完成，关闭看门狗 */
         memset(ctx->ram_block_buffer, 0, sizeof(ctx->ram_block_buffer));
 
         send_ack(ctx, BOOT_CMD_DATA_END);

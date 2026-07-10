@@ -112,6 +112,10 @@ class FirmwarePanel(QWidget):
     @Slot()
     def _on_start_click(self):
         if self._building:
+            # 取消：立即禁用按钮并反馈，避免误触重新开始升级
+            self.start_btn.setEnabled(False)
+            self.start_btn.setText("取消中…")
+            self.status_label.setText("正在取消…")
             self.stop_requested.emit()
         else:
             if not self._fw_path:
@@ -173,6 +177,12 @@ class FirmwarePanel(QWidget):
         self.start_btn.setText("取消" if building else "开始升级")
         self.start_btn.setEnabled(True)
         self.browse_btn.setEnabled(not building)
+
+    def set_cancelling(self):
+        """取消进行中：禁用按钮并反馈，直到 on_finished 恢复。"""
+        self.start_btn.setEnabled(False)
+        self.start_btn.setText("取消中…")
+        self.status_label.setText("正在取消…")
 
     def reset(self):
         self.progress_bar.setValue(0)
