@@ -261,7 +261,7 @@ class FlashWorker(QObject):
                     chunk = block[seq_idx * d:(seq_idx + 1) * d]
                     raw = build_data(seq_idx, chunk)
                     self._send(raw, config.max_frame_size)
-                    time.sleep(0.0001)
+                    time.sleep(0.001)
                     if self._cancel_requested:
                         raise RuntimeError("用户取消")
 

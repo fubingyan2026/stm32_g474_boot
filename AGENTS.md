@@ -15,7 +15,7 @@ No RTOS — cooperative sw_timer scheduler
 tasks/ → service/ → device_drivers/ → m_middlewares/
 ```
 
-[`boot_protocol_spec.md`](boot_protocol_spec.md) defines the CAN/CAN FD dual A/B upgrade protocol. [`can_fd_dlc_padding_fix.md`](can_fd_dlc_padding_fix.md) documents a subtle CAN FD data-length issue.
+[`boot_protocol_spec.md`](boot_protocol_spec.md) defines the CAN/CAN FD dual A/B upgrade protocol (32-bit checksum verification). [`can_fd_dlc_padding_fix.md`](can_fd_dlc_padding_fix.md) documents a subtle CAN FD data-length issue.
 
 ## Coding rules
 

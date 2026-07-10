@@ -25,14 +25,14 @@ Four presets are available: `Debug`, `Release` (`-Os -g0`), `RelWithDebInfo`, `M
 
 ## Flash layout
 
-The STM32G474 has 128 KB of internal flash. The linker script (`STM32G474XX_FLASH.ld`) only maps the **bootloader's own 32 KB** region — App partitions are accessed at runtime via absolute-address flash operations, not linker symbols.
+The STM32G474 has 128 KB of internal flash. The linker script (`STM32G474XX_FLASH.ld`) only maps the **bootloader's own 36 KB** region — App partitions are accessed at runtime via absolute-address flash operations, not linker symbols.
 
 | Region | Address | Size | Notes |
 |--------|---------|------|-------|
-| Bootloader | `0x08000000` | 32 KB | Linked region; contains this project |
-| App A | `0x08008000` | 40 KB | Active/standby firmware slot |
-| App B | `0x08012000` | 40 KB | Alternate firmware slot |
-| Metadata | `0x0801C000` | 2 KB | One flash page; stores `boot_metadata_t` |
+| Bootloader | `0x08000000` | 36 KB | Linked region; contains this project |
+| App A | `0x08009000` | 40 KB | Active/standby firmware slot |
+| App B | `0x08013000` | 40 KB | Alternate firmware slot |
+| Metadata | `0x0801D000` | 4 KB | Aligned to min page size (4 KB); stores `boot_metadata_t` |
 
 The flash driver (`drv_stm32g4_flash`) auto-detects single-bank (4 KB pages) vs. dual-bank (2 KB pages) mode at init by reading the `FLASH->OPTR` DBANK bit, and handles cross-bank erase by splitting operations at bank boundaries.
 
@@ -92,9 +92,10 @@ Tasks are thin — they own timers and stitch layers together. Services contain 
 This project implements a **dual A/B partition** firmware upgrade system over CAN/CAN FD. The protocol is fully specified in [`boot_protocol_spec.md`](boot_protocol_spec.md). A critical bug fix for CAN FD DLC padding is documented in [`can_fd_dlc_padding_fix.md`](can_fd_dlc_padding_fix.md).
 
 **Protocol basics:**
-- CAN IDs `0x701` (Host→Node) and `0x702` (Node→Host)
+- CAN IDs `0x701` (Host→Node) and `0x702` (Node→Host) — Host ID configurable in the GUI, Node ID = Host ID + 1
 - 2-byte header (Command + Sequence) per frame
-- 1 KB block checksums with checksum at fixed offset (Byte 2-3) to avoid CAN FD padding issues
+- 1 KB block checksums (16-bit additive) with checksum at fixed offset (Byte 2-3) to avoid CAN FD padding issues
+- Full-image verification: 32-bit additive checksum (`sum(fw_data) & 0xFFFFFFFF`) instead of CRC32
 - Commands: `START` (0x01), `METADATA` (0x02), `DATA` (0x03), `VERIFY` (0x04), `REBOOT` (0x05), `DATA_END` (0x08), `ACK` (0x10), `NACK` (0x11)
 - Support for both Classic CAN (8-byte frames) and CAN FD (up to 64-byte frames), frame size negotiated at START from the discrete set `{8, 12, 16, 20, 24, 32, 48, 64}`
 
