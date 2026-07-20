@@ -390,7 +390,6 @@ static fsm_state_t handler_data_transfer(fsm_t* fsm)
     uint8_t cmd, seq;
     uint8_t payload_len;
     const uint8_t* payload;
-    uint8_t d;
 
     boot_transport_parse_header(s_pending_msg, &cmd, &seq);
 
@@ -427,7 +426,6 @@ static fsm_state_t handler_data_transfer(fsm_t* fsm)
 
     if (cmd == BOOT_CMD_DATA) {
         boot_transport_parse_data(s_pending_msg, &seq, &payload, &payload_len);
-        d = boot_transport_payload_size(ctx->max_frame_size);
 
         /* 序号检查：错序即时拦截，回带当前期望块号，令 Host 经 DATA_START 重新对齐 */
         if (seq != ctx->expected_seq) {

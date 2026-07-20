@@ -177,7 +177,7 @@ static inline void utils_norm_angle_0_2pi(float* angle)
     }
 }
 
-static void utils_truncate_number(float* number, const float min, const float max)
+static inline void utils_truncate_number(float* number, const float min, const float max)
 {
     if (*number > max) {
         *number = max;
@@ -186,7 +186,7 @@ static void utils_truncate_number(float* number, const float min, const float ma
     }
 }
 
-static void utils_truncate_number_int(int* number, const int min, const int max)
+static inline void utils_truncate_number_int(int* number, const int min, const int max)
 {
     if (*number > max) {
         *number = max;

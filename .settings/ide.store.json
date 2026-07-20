@@ -2,7 +2,7 @@
   "source": {
     "sourceType": "STM32CubeMX"
   },
-  "device": "STM32G474RBT6",
+  "device": "STM32G474RET6",
   "core": "Cortex-M4",
   "order": 0,
   "toolchain": "GCC"
