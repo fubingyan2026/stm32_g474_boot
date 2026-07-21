@@ -41,7 +41,7 @@ extern "C" {
  *   或在 CmakeLists.txt 中添加：target_compile_definitions(... PRIVATE LOG_ENABLED=0)
  */
 #ifndef LOG_ENABLED
-#define LOG_ENABLED 0
+#define LOG_ENABLED 1
 #endif
 
 /* Exported types ------------------------------------------------------------*/

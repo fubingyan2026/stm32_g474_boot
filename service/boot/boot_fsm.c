@@ -15,8 +15,21 @@
 
 /* Private constants ---------------------------------------------------------*/
 
-/** 上位机 TAG */
-#define BOOT_TAG "boot_fsm"
+/** @brief 本文件日志开关：置 0 屏蔽本文件全部打印 */
+#define BOOT_FSM_LOG_ENABLE 0
+
+#if BOOT_FSM_LOG_ENABLE
+#define BOOT_FSM_LOG_E(...) LOG_E("boot_fsm", __VA_ARGS__)
+#define BOOT_FSM_LOG_W(...) LOG_W("boot_fsm", __VA_ARGS__)
+#define BOOT_FSM_LOG_I(...) LOG_I("boot_fsm", __VA_ARGS__)
+#define BOOT_FSM_LOG_D(...) LOG_D("boot_fsm", __VA_ARGS__)
+#else
+#define BOOT_FSM_LOG_E(...) ((void)0)
+#define BOOT_FSM_LOG_W(...) ((void)0)
+#define BOOT_FSM_LOG_I(...) ((void)0)
+#define BOOT_FSM_LOG_D(...) ((void)0)
+#endif
+
 #define FSM_CYCLE_MS 1
 /* Private variables ---------------------------------------------------------*/
 
@@ -134,7 +147,7 @@ void boot_fsm_process_msg(boot_fsm_context_t* ctx, const drv_can_msg_t* msg)
         uint8_t cmd, seq;
         boot_transport_parse_header(msg, &cmd, &seq);
         if (cmd == BOOT_CMD_CANCEL) {
-            LOG_W(BOOT_TAG, "收到 CANCEL，安全退回 IDLE");
+            BOOT_FSM_LOG_W( "收到 CANCEL，安全退回 IDLE");
             reset_transfer_state(ctx);
             ctx->block_active = false;
             send_ack(ctx, BOOT_CMD_CANCEL);
@@ -169,7 +182,7 @@ void boot_fsm_tick(boot_fsm_context_t* ctx)
     if (fsm_current_state((fsm_t*)ctx->fsm) == BOOT_STATE_DATA_TRANSFER
         && ctx->block_active
         && (ctx->tick_count - ctx->last_block_tick) > BOOT_BLOCK_TIMEOUT_MS) {
-        LOG_W(BOOT_TAG, "块级看门狗超时(%ums)，回带期望块号 %u，退回安全等待",
+        BOOT_FSM_LOG_W( "块级看门狗超时(%ums)，回带期望块号 %u，退回安全等待",
             BOOT_BLOCK_TIMEOUT_MS, ctx->expected_block_index);
         send_nack_idx(ctx, BOOT_CMD_DATA_END,
             BOOT_STATUS_TIMEOUT, ctx->expected_block_index);
@@ -182,7 +195,7 @@ void boot_fsm_tick(boot_fsm_context_t* ctx)
 
     elapsed = ctx->tick_count - ctx->last_activity_tick;
     if (elapsed > BOOT_FSM_TIMEOUT_MS) {
-        LOG_W(BOOT_TAG, "超时: %d (毫秒)无活动，复位到 IDLE",elapsed);
+        BOOT_FSM_LOG_W( "超时: %d (毫秒)无活动，复位到 IDLE",elapsed);
         /* 超时：复位到 IDLE */
         fsm_goto((fsm_t*)ctx->fsm, BOOT_STATE_IDLE);
         ctx->last_activity_tick = ctx->tick_count;
@@ -265,21 +278,21 @@ static fsm_state_t handler_idle(fsm_t* fsm)
         return BOOT_STATE_IDLE;
     }
 
-    LOG_I(BOOT_TAG, "收到 START 帧");
+    BOOT_FSM_LOG_I( "收到 START 帧");
 
     /* 先解帧内容（不含 max_frame_size 校验） */
     uint32_t tmp_fw_size;
     uint16_t tmp_hw_id;
     uint8_t tmp_frame_size;
     if (!boot_transport_parse_start(s_pending_msg, &tmp_fw_size, &tmp_hw_id, &tmp_frame_size)) {
-        LOG_E(BOOT_TAG, "START 帧格式无效，拒绝");
+        BOOT_FSM_LOG_E( "START 帧格式无效，拒绝");
         send_nack(ctx, BOOT_CMD_START, BOOT_STATUS_INVALID_FRAME);
         return BOOT_STATE_IDLE;
     }
 
     /* 单独校验帧长度是否支持 */
     if (!boot_transport_is_valid_frame_size(tmp_frame_size)) {
-        LOG_E(BOOT_TAG, "帧长度不支持: %u", tmp_frame_size);
+        BOOT_FSM_LOG_E( "帧长度不支持: %u", tmp_frame_size);
         send_nack(ctx, BOOT_CMD_START, BOOT_STATUS_FRAME_SIZE);
         return BOOT_STATE_IDLE;
     }
@@ -288,12 +301,12 @@ static fsm_state_t handler_idle(fsm_t* fsm)
     hw_id = tmp_hw_id;
     max_frame_size = tmp_frame_size;
 
-    LOG_I(BOOT_TAG, "START: fw_size=%u, hw_id=0x%04X, max_frame_size=%u",
+    BOOT_FSM_LOG_I( "START: fw_size=%u, hw_id=0x%04X, max_frame_size=%u",
         fw_size, hw_id, max_frame_size);
 
     /* 校验硬件兼容 ID */
     if (hw_id != ctx->config.hw_compat_id) {
-        LOG_E(BOOT_TAG, "硬件 ID 不匹配: 期望 0x%04X, 收到 0x%04X",
+        BOOT_FSM_LOG_E( "硬件 ID 不匹配: 期望 0x%04X, 收到 0x%04X",
             ctx->config.hw_compat_id, hw_id);
         send_nack(ctx, BOOT_CMD_START, BOOT_STATUS_HW_MISMATCH);
         return BOOT_STATE_IDLE;
@@ -301,12 +314,12 @@ static fsm_state_t handler_idle(fsm_t* fsm)
 
     /* 校验固件大小不超过分区 */
     if (fw_size == 0U) {
-        LOG_E(BOOT_TAG, "固件大小为 0,拒绝");
+        BOOT_FSM_LOG_E( "固件大小为 0,拒绝");
         send_nack(ctx, BOOT_CMD_START, BOOT_STATUS_INVALID_FRAME);
         return BOOT_STATE_IDLE;
     }
     if (fw_size > BOOT_FLASH_APP_SIZE) {
-        LOG_E(BOOT_TAG, "固件太大: %u (分区上限 %u)", fw_size, BOOT_FLASH_APP_SIZE);
+        BOOT_FSM_LOG_E( "固件太大: %u (分区上限 %u)", fw_size, BOOT_FLASH_APP_SIZE);
         send_nack(ctx, BOOT_CMD_START, BOOT_STATUS_FW_TOO_BIG);
         return BOOT_STATE_IDLE;
     }
@@ -318,14 +331,14 @@ static fsm_state_t handler_idle(fsm_t* fsm)
 
     /* 擦除目标分区（由 boot_task 根据当前有效分区决定 A/B） */
     ctx->target_partition = ctx->config.target_partition;
-    LOG_I(BOOT_TAG, "擦除目标分区 App %c", 'A' + ctx->target_partition);
+    BOOT_FSM_LOG_I( "擦除目标分区 App %c", 'A' + ctx->target_partition);
     if (ctx->config.erase_cb(ctx->config.user_data) != 0U) {
-        LOG_E(BOOT_TAG, "分区擦除失败");
+        BOOT_FSM_LOG_E( "分区擦除失败");
         send_nack(ctx, BOOT_CMD_START, BOOT_STATUS_FLASH_ERASE_ERR);
         return BOOT_STATE_IDLE;
     }
 
-    LOG_I(BOOT_TAG, "握手完成 → START 状态");
+    BOOT_FSM_LOG_I( "握手完成 → START 状态");
     send_ack(ctx, BOOT_CMD_START);
     return BOOT_STATE_START;
 }
@@ -350,7 +363,7 @@ static fsm_state_t handler_start(fsm_t* fsm)
         if (boot_transport_parse_start(s_pending_msg, &fw_size, &hw_id, &max_frame_size)
             && hw_id == ctx->config.hw_compat_id && fw_size > 0U
             && fw_size <= BOOT_FLASH_APP_SIZE) {
-            LOG_W(BOOT_TAG, "收到重复 START，重新协商参数");
+            BOOT_FSM_LOG_W( "收到重复 START，重新协商参数");
             ctx->fw_total_size = fw_size;
             ctx->max_frame_size = max_frame_size;
             reset_transfer_state(ctx);
@@ -360,13 +373,13 @@ static fsm_state_t handler_start(fsm_t* fsm)
     }
 
     if (cmd != BOOT_CMD_METADATA) {
-        LOG_W(BOOT_TAG, "收到非预期命令 0x%02X，期望 METADATA(0x02)", cmd);
+        BOOT_FSM_LOG_W( "收到非预期命令 0x%02X，期望 METADATA(0x02)", cmd);
         send_nack(ctx, cmd, BOOT_STATUS_INVALID_STATE);
         return BOOT_STATE_START;
     }
 
     if (!boot_transport_parse_metadata(s_pending_msg, &checksum, &version)) {
-        LOG_E(BOOT_TAG, "METADATA 帧格式无效");
+        BOOT_FSM_LOG_E( "METADATA 帧格式无效");
         send_nack(ctx, BOOT_CMD_METADATA, BOOT_STATUS_INVALID_FRAME);
         return BOOT_STATE_START;
     }
@@ -374,10 +387,10 @@ static fsm_state_t handler_start(fsm_t* fsm)
     /* 保存元数据 */
     ctx->fw_checksum = checksum;
     ctx->fw_version = version;
-    LOG_I(BOOT_TAG, "收到 METADATA: checksum=0x%08X, version=%u", checksum, version);
+    BOOT_FSM_LOG_I( "收到 METADATA: checksum=0x%08X, version=%u", checksum, version);
 
     send_ack(ctx, BOOT_CMD_METADATA);
-    LOG_I(BOOT_TAG, "→ DATA_TRANSFER 状态");
+    BOOT_FSM_LOG_I( "→ DATA_TRANSFER 状态");
     return BOOT_STATE_DATA_TRANSFER;
 }
 
@@ -396,14 +409,14 @@ static fsm_state_t handler_data_transfer(fsm_t* fsm)
     if (cmd == BOOT_CMD_DATA_START) {
         uint16_t block_index = 0U;
         if (!boot_transport_parse_data_start(s_pending_msg, &block_index)) {
-            LOG_E(BOOT_TAG, "DATA_START 帧格式无效");
+            BOOT_FSM_LOG_E( "DATA_START 帧格式无效");
             send_nack_idx(ctx, BOOT_CMD_DATA_START,
                 BOOT_STATUS_INVALID_FRAME, ctx->expected_block_index);
             return BOOT_STATE_DATA_TRANSFER;
         }
 
         if (block_index != ctx->expected_block_index) {
-            LOG_W(BOOT_TAG, "块号不匹配: 期望 %u, 收到 %u，回带期望块号",
+            BOOT_FSM_LOG_W( "块号不匹配: 期望 %u, 收到 %u，回带期望块号",
                 ctx->expected_block_index, block_index);
             send_nack_idx(ctx, BOOT_CMD_DATA_START,
                 BOOT_STATUS_BLOCK_INDEX_MISMATCH, ctx->expected_block_index);
@@ -419,7 +432,7 @@ static fsm_state_t handler_data_transfer(fsm_t* fsm)
         ctx->block_active = true;
         ctx->last_block_tick = ctx->tick_count;
 
-        LOG_D(BOOT_TAG, "DATA_START: block_index=%u，接收区就绪", block_index);
+        BOOT_FSM_LOG_D( "DATA_START: block_index=%u，接收区就绪", block_index);
         send_ack_idx(ctx, BOOT_CMD_DATA_START, ctx->expected_block_index);
         return BOOT_STATE_DATA_TRANSFER;
     }
@@ -429,7 +442,7 @@ static fsm_state_t handler_data_transfer(fsm_t* fsm)
 
         /* 序号检查：错序即时拦截，回带当前期望块号，令 Host 经 DATA_START 重新对齐 */
         if (seq != ctx->expected_seq) {
-            LOG_W(BOOT_TAG, "DATA 序号错乱: 期望 %u, 收到 %u，即时 NACK", ctx->expected_seq, seq);
+            BOOT_FSM_LOG_W( "DATA 序号错乱: 期望 %u, 收到 %u，即时 NACK", ctx->expected_seq, seq);
             send_nack_idx(ctx, BOOT_CMD_DATA,
                 BOOT_STATUS_INVALID_FRAME, ctx->expected_block_index);
             /* 复位当前块局部状态，等待 Host 重发 DATA_START */
@@ -450,13 +463,13 @@ static fsm_state_t handler_data_transfer(fsm_t* fsm)
         ctx->block_active = true;
         ctx->last_block_tick = ctx->tick_count;
 
-        LOG_D(BOOT_TAG, "DATA seq=%u, len=%u, accumulated=%u",
+        BOOT_FSM_LOG_D( "DATA seq=%u, len=%u, accumulated=%u",
             seq, payload_len, ctx->block_accumulated_len);
 
         /* 检查是否满 1KB（非尾帧情况不应满，但做安全检查） */
         if (ctx->block_accumulated_len >= BOOT_BLOCK_SIZE) {
             /* 不应在 DATA 帧就满，必须等 DATA_END */
-            LOG_W(BOOT_TAG, "BUFFER 已满但未收到 DATA_END，复位");
+            BOOT_FSM_LOG_W( "BUFFER 已满但未收到 DATA_END，复位");
             send_nack_idx(ctx, BOOT_CMD_DATA,
                 BOOT_STATUS_INVALID_FRAME, ctx->expected_block_index);
             ctx->block_accumulated_len = 0U;
@@ -484,7 +497,7 @@ static fsm_state_t handler_data_transfer(fsm_t* fsm)
             ctx->block_accumulated_len = (uint16_t)(ctx->block_accumulated_len + copy_len);
         }
 
-        LOG_D(BOOT_TAG, "DATA_END: seq=%u, rem_len=%u, expected_cs=0x%04X",
+        BOOT_FSM_LOG_D( "DATA_END: seq=%u, rem_len=%u, expected_cs=0x%04X",
             seq, rem_len, expected_checksum);
 
         /* 计算 1KB Block 的累加和 */
@@ -492,7 +505,7 @@ static fsm_state_t handler_data_transfer(fsm_t* fsm)
             ctx->ram_block_buffer, BOOT_BLOCK_SIZE);
 
         if (calculated_checksum != expected_checksum) {
-            LOG_E(BOOT_TAG, "Block checksum 失败: 期望 0x%04X, 计算 0x%04X",
+            BOOT_FSM_LOG_E( "Block checksum 失败: 期望 0x%04X, 计算 0x%04X",
                 expected_checksum, calculated_checksum);
             send_nack(ctx, BOOT_CMD_DATA_END, BOOT_STATUS_BLOCK_CHECKSUM);
             /* 复位当前 Block，等待重发 */
@@ -500,7 +513,7 @@ static fsm_state_t handler_data_transfer(fsm_t* fsm)
             return BOOT_STATE_DATA_TRANSFER;
         }
 
-        LOG_I(BOOT_TAG, "Block checksum OK (0x%04X)，写入 Flash offset=%u",
+        BOOT_FSM_LOG_I( "Block checksum OK (0x%04X)，写入 Flash offset=%u",
             calculated_checksum, ctx->total_received);
 
         /* Block 校验通过：写入 Flash */
@@ -508,7 +521,7 @@ static fsm_state_t handler_data_transfer(fsm_t* fsm)
                 ctx->total_received, ctx->ram_block_buffer,
                 BOOT_BLOCK_SIZE)
             != 0U) {
-            LOG_E(BOOT_TAG, "Flash 写入失败, offset=%u", ctx->total_received);
+            BOOT_FSM_LOG_E( "Flash 写入失败, offset=%u", ctx->total_received);
             send_nack(ctx, BOOT_CMD_DATA_END, BOOT_STATUS_FLASH_WRITE_ERR);
             return BOOT_STATE_IDLE;
         }
@@ -518,7 +531,7 @@ static fsm_state_t handler_data_transfer(fsm_t* fsm)
                 ctx->total_received, ctx->ram_block_buffer,
                 BOOT_BLOCK_SIZE)
             != 0U) {
-            LOG_E(BOOT_TAG, "Flash 读回校验失败, offset=%u", ctx->total_received);
+            BOOT_FSM_LOG_E( "Flash 读回校验失败, offset=%u", ctx->total_received);
             send_nack(ctx, BOOT_CMD_DATA_END, BOOT_STATUS_FLASH_VERIFY_ERR);
             return BOOT_STATE_IDLE;
         }
@@ -534,17 +547,17 @@ static fsm_state_t handler_data_transfer(fsm_t* fsm)
 
         /* 检查是否全部接收完毕 */
         if (ctx->total_received >= ctx->fw_total_size) {
-            LOG_I(BOOT_TAG, "全部数据接收完毕 (%u 字节)，等待 VERIFY", ctx->fw_total_size);
+            BOOT_FSM_LOG_I( "全部数据接收完毕 (%u 字节)，等待 VERIFY", ctx->fw_total_size);
             return BOOT_STATE_VERIFY_PENDING;
         }
 
-        LOG_I(BOOT_TAG, "Block 完成, 已接收 %u/%u 字节",
+        BOOT_FSM_LOG_I( "Block 完成, 已接收 %u/%u 字节",
             ctx->total_received, ctx->fw_total_size);
         return BOOT_STATE_DATA_TRANSFER;
     }
 
     /* 其他命令：非法 */
-    LOG_W(BOOT_TAG, "DATA_TRANSFER 状态收到非预期命令 0x%02X", cmd);
+    BOOT_FSM_LOG_W( "DATA_TRANSFER 状态收到非预期命令 0x%02X", cmd);
     send_nack(ctx, cmd, BOOT_STATUS_INVALID_STATE);
     return BOOT_STATE_DATA_TRANSFER;
 }
@@ -562,34 +575,34 @@ static fsm_state_t handler_verify_pending(fsm_t* fsm)
 
     /* 允许重复 VERIFY */
     if (cmd != BOOT_CMD_VERIFY) {
-        LOG_W(BOOT_TAG, "VERIFY_PENDING 收到非预期命令 0x%02X", cmd);
+        BOOT_FSM_LOG_W( "VERIFY_PENDING 收到非预期命令 0x%02X", cmd);
         send_nack(ctx, cmd, BOOT_STATUS_INVALID_STATE);
         return BOOT_STATE_VERIFY_PENDING;
     }
 
-    LOG_I(BOOT_TAG, "收到 VERIFY 命令，开始整包校验和验证");
+    BOOT_FSM_LOG_I( "收到 VERIFY 命令，开始整包校验和验证");
 
     /* 计算整包 32-bit 累加和 */
     if (ctx->config.verify_fw_cb(ctx->config.user_data,
             ctx->fw_total_size, &calculated_checksum)
         != 0U) {
-        LOG_E(BOOT_TAG, "Flash 读取失败，无法计算校验和");
+        BOOT_FSM_LOG_E( "Flash 读取失败，无法计算校验和");
         send_nack(ctx, BOOT_CMD_VERIFY, BOOT_STATUS_FLASH_READ_ERR);
         return BOOT_STATE_IDLE;
     }
 
-    LOG_I(BOOT_TAG, "Checksum: Flash=0x%08lX, Host=0x%08lX",
+    BOOT_FSM_LOG_I( "Checksum: Flash=0x%08lX, Host=0x%08lX",
         (unsigned long)calculated_checksum,
         (unsigned long)ctx->fw_checksum);
 
     if (calculated_checksum != ctx->fw_checksum) {
-        LOG_E(BOOT_TAG, "校验和不匹配: 期望 0x%08lX, 计算 0x%08lX",
+        BOOT_FSM_LOG_E( "校验和不匹配: 期望 0x%08lX, 计算 0x%08lX",
             (unsigned long)ctx->fw_checksum, (unsigned long)calculated_checksum);
         send_nack(ctx, BOOT_CMD_VERIFY, BOOT_STATUS_CRC32_ERR);
         return BOOT_STATE_IDLE;
     }
 
-    LOG_I(BOOT_TAG, "校验和通过 (0x%08lX) → REBOOT_PENDING",
+    BOOT_FSM_LOG_I( "校验和通过 (0x%08lX) → REBOOT_PENDING",
         (unsigned long)calculated_checksum);
     send_ack(ctx, BOOT_CMD_VERIFY);
     return BOOT_STATE_REBOOT_PENDING;
@@ -606,12 +619,12 @@ static fsm_state_t handler_reboot_pending(fsm_t* fsm)
     boot_transport_parse_header(s_pending_msg, &cmd, &seq);
 
     if (cmd != BOOT_CMD_REBOOT) {
-        LOG_W(BOOT_TAG, "REBOOT_PENDING 收到非预期命令 0x%02X", cmd);
+        BOOT_FSM_LOG_W( "REBOOT_PENDING 收到非预期命令 0x%02X", cmd);
         send_nack(ctx, cmd, BOOT_STATUS_INVALID_STATE);
         return BOOT_STATE_REBOOT_PENDING;
     }
 
-    LOG_I(BOOT_TAG, "收到 REBOOT 命令，写入 Metadata 引导分区 %c",
+    BOOT_FSM_LOG_I( "收到 REBOOT 命令，写入 Metadata 引导分区 %c",
         'A' + ctx->target_partition);
 
     /* 设置 Metadata 启动标志 */
@@ -620,7 +633,7 @@ static fsm_state_t handler_reboot_pending(fsm_t* fsm)
         ctx->fw_total_size, ctx->fw_checksum);
 
     send_ack(ctx, BOOT_CMD_REBOOT);
-    LOG_I(BOOT_TAG, "ACK 已发送，即将系统复位...");
+    BOOT_FSM_LOG_I( "ACK 已发送，即将系统复位...");
 
     /* 软件复位 */
     ctx->config.reset_cb(ctx->config.user_data);

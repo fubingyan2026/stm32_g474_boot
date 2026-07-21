@@ -30,7 +30,7 @@
 
 static uint8_t s_tx_buf[LOG_TASK_TX_BUF_SIZE];
 static sw_timer_t s_log_timer;
-static log_task_output_t s_output_mode = LOG_OUTPUT_RTT;
+static log_task_output_t s_output_mode = LOG_OUTPUT_UART;
 
 /* Private function prototypes -----------------------------------------------*/
 
@@ -102,11 +102,11 @@ static void log_timer_cb(void* user_data)
     }
 
     /* ── RX ── */
-    // {
-    //     uint8_t rx_buf[128];
-    //     uint32_t rx_len = drv_uart_rx_read(DRV_UART_CH_1, rx_buf, sizeof(rx_buf));
-    //     if (rx_len > 0) {
-    //         log_hexdump("UART0", rx_buf, rx_len);
-    //     }
-    // }
+    {
+        uint8_t rx_buf[128];
+        uint32_t rx_len = drv_log_uart_rx_read(rx_buf, sizeof(rx_buf));
+        if (rx_len > 0) {
+            log_hexdump("UART0", rx_buf, rx_len);
+        }
+    }
 }

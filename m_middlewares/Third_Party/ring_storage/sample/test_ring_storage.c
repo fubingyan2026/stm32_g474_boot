@@ -24,9 +24,9 @@
 /* ========================================================================== */
 
 #define MOCK_FLASH_SIZE     (256 * 1024)  /* 256KB */
-#define MOCK_SECTOR_SIZE    (128 * 1024)  /* 128KB */
+#define MOCK_SECTOR_SIZE    RING_STORAGE_SECTOR_128K  /* 128KB */
 #define MOCK_START_ADDR     0x08080000u   /* 对齐到 128KB 扇区边界 */
-#define MOCK_WRITE_GRAN     64      /* 64bit = 8B */
+#define MOCK_WRITE_GRAN     RING_STORAGE_WRITE_GRAN_64      /* 64bit = 8B */
 
 static uint8_t s_flash[MOCK_FLASH_SIZE];
 

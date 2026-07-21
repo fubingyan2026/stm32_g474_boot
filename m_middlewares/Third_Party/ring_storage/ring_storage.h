@@ -35,7 +35,7 @@
  *          const ring_storage_config_t cfg = {
  *              .start_addr        = 0x08078000,
  *              .area_size         = 8192,
- *              .sector_size       = 2048,
+ *              .sector_size       = RING_STORAGE_SECTOR_2K,
  *              .write_gran        = 64,
  *              .frame_buffer      = s_frame_buf,
  *              .frame_buffer_size = sizeof(s_frame_buf),
@@ -94,13 +94,40 @@ typedef enum {
 } ring_storage_error_t;
 
 /**
+ * @brief 写入颗粒度枚举
+ */
+typedef enum {
+    RING_STORAGE_WRITE_GRAN_8   =   8,   /**<  8-bit  字节编程（如 STM32F4） */
+    RING_STORAGE_WRITE_GRAN_32  =  32,   /**< 32-bit  字编程  （如 STM32F1） */
+    RING_STORAGE_WRITE_GRAN_64  =  64,   /**< 64-bit  双字编程（如 STM32G4） */
+    RING_STORAGE_WRITE_GRAN_128 = 128,   /**< 128-bit 四字编程 */
+    RING_STORAGE_WRITE_GRAN_256 = 256,   /**< 256-bit 八字编程（如 STM32H7） */
+} ring_storage_write_gran_t;
+
+/**
+ * @brief 扇区大小枚举
+ */
+typedef enum {
+    RING_STORAGE_SECTOR_512   = 0x00000200,  /**<   512 字节 */
+    RING_STORAGE_SECTOR_1K    = 0x00000400,  /**<     1 KB (STM32F1) */
+    RING_STORAGE_SECTOR_2K    = 0x00000800,  /**<     2 KB (STM32G4 双 Bank) */
+    RING_STORAGE_SECTOR_4K    = 0x00001000,  /**<     4 KB (STM32G4 单 Bank / STM32G0) */
+    RING_STORAGE_SECTOR_8K    = 0x00002000,  /**<     8 KB */
+    RING_STORAGE_SECTOR_16K   = 0x00004000,  /**<    16 KB (STM32F4) */
+    RING_STORAGE_SECTOR_32K   = 0x00008000,  /**<    32 KB */
+    RING_STORAGE_SECTOR_64K   = 0x00010000,  /**<    64 KB */
+    RING_STORAGE_SECTOR_128K  = 0x00020000,  /**<   128 KB (STM32H7) */
+    RING_STORAGE_SECTOR_256K  = 0x00040000,  /**<   256 KB */
+} ring_storage_sector_size_t;
+
+/**
  * @brief 环形存储配置结构体
  */
 typedef struct {
     uint32_t start_addr;                    /**< Flash 区域起始地址（须对齐到 sector_size） */
     uint32_t area_size;                     /**< Flash 区域总大小（须为 sector_size 的整数倍，>= 2 个扇区） */
-    uint32_t sector_size;                   /**< 扇区大小（= 最小擦除单位，如 STM32G4 为 2048） */
-    uint32_t write_gran;                    /**< 写入颗粒度（bit：8/32/64/128/256） */
+    ring_storage_sector_size_t sector_size; /**< 扇区大小 */
+    ring_storage_write_gran_t write_gran;   /**< 写入颗粒度 */
     uint8_t* frame_buffer;                  /**< 帧序列化缓冲区（RAM），需 >= 最大帧大小 */
     uint16_t frame_buffer_size;             /**< 帧缓冲区大小 */
 } ring_storage_config_t;
@@ -198,6 +225,18 @@ ring_storage_error_t ring_storage_save(ring_storage_context_t* ctx);
  *          首次使用（无有效帧）返回 RING_STORAGE_ERROR_NO_VALID_FRAME。
  */
 ring_storage_error_t ring_storage_load(ring_storage_context_t* ctx);
+
+/**
+ * @brief   从 Flash 加载指定版本的帧
+ * @param   ctx     上下文指针
+ * @param   version 目标版本号（0 = 加载最新版，同 ring_storage_load）
+ * @return  操作结果错误码
+ * @note    遍历所有扇区查找指定版本号的有效帧并加载。
+ *          若该版本已被 GC 擦除或不存在，返回 RING_STORAGE_ERROR_NO_VALID_FRAME。
+ *          加载后不修改 ctx 的活动扇区/写偏移等运行时状态。
+ */
+ring_storage_error_t ring_storage_load_version(ring_storage_context_t* ctx,
+                                               uint32_t version);
 
 #ifdef __cplusplus
 }

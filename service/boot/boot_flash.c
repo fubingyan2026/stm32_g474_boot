@@ -12,6 +12,23 @@
 #include "drv_stm32g4_flash.h"
 #include "log.h"
 
+/* Private constants ---------------------------------------------------------*/
+
+/** @brief 本文件日志开关：置 0 屏蔽本文件全部打印 */
+#define BOOT_FLASH_LOG_ENABLE 0
+
+#if BOOT_FLASH_LOG_ENABLE
+#define BOOT_FLASH_LOG_E(...) LOG_E("boot_flash", __VA_ARGS__)
+#define BOOT_FLASH_LOG_W(...) LOG_W("boot_flash", __VA_ARGS__)
+#define BOOT_FLASH_LOG_I(...) LOG_I("boot_flash", __VA_ARGS__)
+#define BOOT_FLASH_LOG_D(...) LOG_D("boot_flash", __VA_ARGS__)
+#else
+#define BOOT_FLASH_LOG_E(...) ((void)0)
+#define BOOT_FLASH_LOG_W(...) ((void)0)
+#define BOOT_FLASH_LOG_I(...) ((void)0)
+#define BOOT_FLASH_LOG_D(...) ((void)0)
+#endif
+
 /* Private functions ---------------------------------------------------------*/
 static const uint32_t BOOT_FLASH_BOOT_ADDR = BOOT_FLASH_BASE; /**< 0x08000000 */
 static const uint32_t BOOT_FLASH_APP_A_ADDR = (BOOT_FLASH_BOOT_ADDR + BOOT_FLASH_BOOT_SIZE); /**< 0x08008000 */
@@ -43,10 +60,10 @@ boot_flash_error_t boot_flash_init(boot_flash_context_t* ctx)
         const uint8_t test_data[] = "123456789";
         uint32_t test_crc = get_CRC32_check_sum(test_data, sizeof(test_data) - 1U, 0xFFFFFFFFU);
         if (test_crc != 0xCBF43926U) {
-            LOG_E("flash", "CRC32 自检失败: 计算=0x%08lX, 期望=0xCBF43926",
+            BOOT_FLASH_LOG_E( "CRC32 自检失败: 计算=0x%08lX, 期望=0xCBF43926",
                 (unsigned long)test_crc);
         } else {
-            LOG_I("flash", "CRC32 自检通过 (0x%08lX)", (unsigned long)test_crc);
+            BOOT_FLASH_LOG_I( "CRC32 自检通过 (0x%08lX)", (unsigned long)test_crc);
         }
     }
 
@@ -120,15 +137,15 @@ boot_flash_error_t boot_flash_verify_block(boot_flash_context_t* ctx,
     /* 逐字节读回比对 */
     for (i = 0U; i < len; i++) {
         if (flash_ptr[i] != data[i]) {
-            LOG_E("flash", "Verify FAIL @ offset=%lu+%lu: flash=0x%02X, expect=0x%02X",
+            BOOT_FLASH_LOG_E( "Verify FAIL @ offset=%lu+%lu: flash=0x%02X, expect=0x%02X",
                 (unsigned long)offset, (unsigned long)i,
                 flash_ptr[i], data[i]);
-            LOG_E("flash", "Verify ctx-8: %02X %02X %02X %02X %02X %02X %02X %02X",
+            BOOT_FLASH_LOG_E( "Verify ctx-8: %02X %02X %02X %02X %02X %02X %02X %02X",
                 (i >= 8) ? flash_ptr[i - 8] : 0xFF, (i >= 7) ? flash_ptr[i - 7] : 0xFF,
                 (i >= 6) ? flash_ptr[i - 6] : 0xFF, (i >= 5) ? flash_ptr[i - 5] : 0xFF,
                 (i >= 4) ? flash_ptr[i - 4] : 0xFF, (i >= 3) ? flash_ptr[i - 3] : 0xFF,
                 (i >= 2) ? flash_ptr[i - 2] : 0xFF, (i >= 1) ? flash_ptr[i - 1] : 0xFF);
-            LOG_E("flash", "Verify ctx+8: %02X %02X %02X %02X %02X %02X %02X %02X",
+            BOOT_FLASH_LOG_E( "Verify ctx+8: %02X %02X %02X %02X %02X %02X %02X %02X",
                 flash_ptr[i], flash_ptr[i + 1], flash_ptr[i + 2], flash_ptr[i + 3],
                 flash_ptr[i + 4], flash_ptr[i + 5], flash_ptr[i + 6], flash_ptr[i + 7]);
             return BOOT_FLASH_ERROR_VERIFY;
@@ -189,7 +206,7 @@ boot_flash_error_t boot_flash_compute_crc32(boot_flash_context_t* ctx,
 
     addr = boot_flash_partition_addr(partition);
 
-    LOG_I("flash", "CRC32: part=%c, addr=0x%08lX, size=%lu",
+    BOOT_FLASH_LOG_I( "CRC32: part=%c, addr=0x%08lX, size=%lu",
         (partition == BOOT_PARTITION_A) ? 'A' : 'B',
         (unsigned long)addr, (unsigned long)size);
 
@@ -216,7 +233,7 @@ boot_flash_error_t boot_flash_compute_checksum(boot_flash_context_t* ctx,
 
     addr = boot_flash_partition_addr(partition);
 
-    LOG_I("flash", "Checksum: part=%c, addr=0x%08lX, size=%lu",
+    BOOT_FLASH_LOG_I( "Checksum: part=%c, addr=0x%08lX, size=%lu",
         (partition == BOOT_PARTITION_A) ? 'A' : 'B',
         (unsigned long)addr, (unsigned long)size);
 
@@ -230,6 +247,6 @@ boot_flash_error_t boot_flash_compute_checksum(boot_flash_context_t* ctx,
     }
 
     *checksum = sum;
-    LOG_I("flash", "Checksum result: 0x%08lX", (unsigned long)sum);
+    BOOT_FLASH_LOG_I( "Checksum result: 0x%08lX", (unsigned long)sum);
     return BOOT_FLASH_OK;
 }

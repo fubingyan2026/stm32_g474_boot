@@ -22,8 +22,20 @@
 
 /* Private constants ---------------------------------------------------------*/
 
-/** 上位机 TAG */
-#define BOOT_TAG "boot_task"
+/** @brief 本文件日志开关：置 0 屏蔽本文件全部打印 */
+#define BOOT_TASK_LOG_ENABLE 0
+
+#if BOOT_TASK_LOG_ENABLE
+#define BOOT_TASK_LOG_E(...) LOG_E("boot_task", __VA_ARGS__)
+#define BOOT_TASK_LOG_W(...) LOG_W("boot_task", __VA_ARGS__)
+#define BOOT_TASK_LOG_I(...) LOG_I("boot_task", __VA_ARGS__)
+#define BOOT_TASK_LOG_D(...) LOG_D("boot_task", __VA_ARGS__)
+#else
+#define BOOT_TASK_LOG_E(...) ((void)0)
+#define BOOT_TASK_LOG_W(...) ((void)0)
+#define BOOT_TASK_LOG_I(...) ((void)0)
+#define BOOT_TASK_LOG_D(...) ((void)0)
+#endif
 
 /** CAN RX 消息队列容量 */
 #define BOOT_MSG_FIFO_SIZE 256U
@@ -84,16 +96,16 @@ bool boot_task_try_boot_app(void)
 
     /* 检查 Metadata 有效性 */
     if (meta.magic != BOOT_METADATA_MAGIC) {
-        LOG_I(BOOT_TAG, "未找到有效 Metadata，进入 Bootloader 模式");
+        BOOT_TASK_LOG_I( "未找到有效 Metadata，进入 Bootloader 模式");
         return false;
     }
 
     if (meta.upgrade_flag != 0U) {
-        LOG_I(BOOT_TAG, "升级标志置位，进入 Bootloader 模式 (flag=%u)", meta.upgrade_flag);
+        BOOT_TASK_LOG_I( "升级标志置位，进入 Bootloader 模式 (flag=%u)", meta.upgrade_flag);
         return false;
     }
 
-    LOG_I(BOOT_TAG, "Metadata 有效: 分区=%c, 版本=%u, 大小=%u, checksum=0x%08lX",
+    BOOT_TASK_LOG_I( "Metadata 有效: 分区=%c, 版本=%u, 大小=%u, checksum=0x%08lX",
         (meta.boot_partition == BOOT_PARTITION_A) ? 'A' : 'B',
         meta.version, meta.fw_size, meta.fw_checksum);
 
@@ -105,18 +117,18 @@ bool boot_task_try_boot_app(void)
     if (boot_flash_compute_checksum(&flash_ctx, part,
             meta.fw_size, &calculated_checksum)
         != BOOT_FLASH_OK) {
-        LOG_E(BOOT_TAG, "分区 %c 校验和计算失败，进入 Bootloader", (part == BOOT_PARTITION_A) ? 'A' : 'B');
+        BOOT_TASK_LOG_E( "分区 %c 校验和计算失败，进入 Bootloader", (part == BOOT_PARTITION_A) ? 'A' : 'B');
         return false;
     }
 
     if (calculated_checksum != meta.fw_checksum) {
-        LOG_E(BOOT_TAG, "分区 %c 校验和不匹配: 期望 0x%08lX, 计算 0x%08lX, 进入 Bootloader",
+        BOOT_TASK_LOG_E( "分区 %c 校验和不匹配: 期望 0x%08lX, 计算 0x%08lX, 进入 Bootloader",
             (part == BOOT_PARTITION_A) ? 'A' : 'B', meta.fw_checksum, calculated_checksum);
         return false;
     }
 
     /* 跳转到 App */
-    LOG_I(BOOT_TAG, "校验和验证通过，跳转到分区 %c, 版本=%u",
+    BOOT_TASK_LOG_I( "校验和验证通过，跳转到分区 %c, 版本=%u",
         (part == BOOT_PARTITION_A) ? 'A' : 'B', meta.version);
 
     // uint32_t app_addr = boot_flash_partition_addr(part);
@@ -137,21 +149,21 @@ void boot_task_init(void)
     boot_fsm_config_t fsm_config;
     drv_can_error_t can_err;
 
-    LOG_I(BOOT_TAG, "初始化 Bootloader...");
+    BOOT_TASK_LOG_I( "初始化 Bootloader...");
 
     /* 初始化消息队列 */
     msg_fifo_init(&s_msg_fifo, s_msg_fifo_buffer,
         sizeof(s_msg_fifo_buffer), sizeof(drv_can_msg_t));
-    LOG_D(BOOT_TAG, "消息队列已初始化 (%u x %u 字节)",
+    BOOT_TASK_LOG_D( "消息队列已初始化 (%u x %u 字节)",
         BOOT_MSG_FIFO_SIZE, (uint32_t)sizeof(drv_can_msg_t));
 
     /* 2. 初始化 Flash */
     flash_err = boot_flash_init(&s_flash_ctx);
     if (flash_err != BOOT_FLASH_OK) {
-        LOG_E(BOOT_TAG, "Flash 初始化失败: err=%d", flash_err);
+        BOOT_TASK_LOG_E( "Flash 初始化失败: err=%d", flash_err);
         return;
     }
-    LOG_D(BOOT_TAG, "Flash 管理器已初始化");
+    BOOT_TASK_LOG_D( "Flash 管理器已初始化");
 
     /* 读取 Metadata，确定目标升级分区（A/B 切换） */
     {
@@ -162,23 +174,23 @@ void boot_task_init(void)
             s_target_partition = (meta.boot_partition == BOOT_PARTITION_A)
                 ? BOOT_PARTITION_B
                 : BOOT_PARTITION_A;
-            LOG_I(BOOT_TAG, "当前分区 %c, 目标分区 %c",
+            BOOT_TASK_LOG_I( "当前分区 %c, 目标分区 %c",
                 'A' + meta.boot_partition, 'A' + s_target_partition);
         } else {
             /* 无有效 App → 默认写到 A */
             s_target_partition = BOOT_PARTITION_A;
-            LOG_I(BOOT_TAG, "无有效 App, 目标分区 A");
+            BOOT_TASK_LOG_I( "无有效 App, 目标分区 A");
         }
     }
 
     /* 初始化 CAN（通道 1） */
     can_err = drv_can_init(DRV_CAN_CH_1, &hfdcan1);
     if (can_err != DRV_CAN_OK) {
-        LOG_E(BOOT_TAG, "CAN 初始化失败: err=%d", can_err);
+        BOOT_TASK_LOG_E( "CAN 初始化失败: err=%d", can_err);
         return;
     }
     drv_can_register_rx_callback(DRV_CAN_CH_1, can_rx_callback);
-    LOG_D(BOOT_TAG, "CAN 已初始化 (FDCAN1, PA11/PA12)");
+    BOOT_TASK_LOG_D( "CAN 已初始化 (FDCAN1, PA11/PA12)");
 
     /* 初始化状态机 */
     memset(&fsm_config, 0, sizeof(fsm_config));
@@ -193,10 +205,10 @@ void boot_task_init(void)
     fsm_config.target_partition = (uint8_t)s_target_partition;
 
     if (!boot_fsm_init(&s_fsm_ctx, &s_fsm, &fsm_config)) {
-        LOG_E(BOOT_TAG, "FSM 状态机初始化失败");
+        BOOT_TASK_LOG_E( "FSM 状态机初始化失败");
         return;
     }
-    LOG_D(BOOT_TAG, "升级状态机已初始化 (HW_ID=0x%04X)", fsm_config.hw_compat_id);
+    BOOT_TASK_LOG_D( "升级状态机已初始化 (HW_ID=0x%04X)", fsm_config.hw_compat_id);
 
     /* 创建轮询定时器 */
     sw_timer_init(&s_timer,
@@ -205,9 +217,9 @@ void boot_task_init(void)
             .callback = boot_timer_cb,
             .user_data = NULL });
     sw_timer_start(&s_timer, BOOT_TASK_PERIOD_MS, 0); /* 0 = 无限重复 */
-    LOG_D(BOOT_TAG, "轮询定时器已启动 (%u ms 周期)", BOOT_TASK_PERIOD_MS);
+    BOOT_TASK_LOG_D( "轮询定时器已启动 (%u ms 周期)", BOOT_TASK_PERIOD_MS);
 
-    LOG_I(BOOT_TAG, "Bootloader 就绪，等待 CAN 升级指令...");
+    BOOT_TASK_LOG_I( "Bootloader 就绪，等待 CAN 升级指令...");
 }
 
 /* Private functions ---------------------------------------------------------*/
@@ -256,7 +268,7 @@ static void boot_timer_cb(void* user_data)
     if (s_busoff_poll_tick >= BOOT_BUSOFF_POLL_MS) {
         s_busoff_poll_tick = 0U;
         if (drv_can_is_bus_off(DRV_CAN_CH_1)) {
-            LOG_W(BOOT_TAG, "检测到 CAN Bus-Off，自动恢复");
+            BOOT_TASK_LOG_W( "检测到 CAN Bus-Off，自动恢复");
             drv_can_recover(DRV_CAN_CH_1);
         }
     }
@@ -272,7 +284,7 @@ static uint8_t write_block_cb(void* user_data, uint32_t offset,
     boot_flash_error_t err = boot_flash_write_block(&s_flash_ctx,
         s_target_partition, offset, data, len);
     if (err != BOOT_FLASH_OK) {
-        LOG_E(BOOT_TAG, "Flash 写入失败: err=%d, offset=%lu, len=%lu", err, offset, len);
+        BOOT_TASK_LOG_E( "Flash 写入失败: err=%d, offset=%lu, len=%lu", err, offset, len);
     }
     return (uint8_t)err;
 }
@@ -285,7 +297,7 @@ static uint8_t verify_block_cb(void* user_data, uint32_t offset,
     boot_flash_error_t err = boot_flash_verify_block(&s_flash_ctx,
         s_target_partition, offset, data, len);
     if (err != BOOT_FLASH_OK) {
-        LOG_E(BOOT_TAG, "Flash 读回校验失败: err=%d, offset=%lu", err, offset);
+        BOOT_TASK_LOG_E( "Flash 读回校验失败: err=%d, offset=%lu", err, offset);
     }
     return (uint8_t)err;
 }
@@ -296,7 +308,7 @@ static uint8_t verify_fw_cb(void* user_data, uint32_t size, uint32_t* checksum)
     boot_flash_error_t err = boot_flash_compute_checksum(&s_flash_ctx,
         s_target_partition, size, checksum);
     if (err != BOOT_FLASH_OK) {
-        LOG_E(BOOT_TAG, "Checksum 计算失败: err=%d, size=%lu", err, size);
+        BOOT_TASK_LOG_E( "Checksum 计算失败: err=%d, size=%lu", err, size);
     }
     return (uint8_t)err;
 }
@@ -307,7 +319,7 @@ static uint8_t erase_cb(void* user_data)
     boot_flash_error_t err = boot_flash_erase_partition(&s_flash_ctx,
         s_target_partition);
     if (err != BOOT_FLASH_OK) {
-        LOG_E(BOOT_TAG, "分区擦除失败: err=%d, partition=%c",
+        BOOT_TASK_LOG_E( "分区擦除失败: err=%d, partition=%c",
             err, 'A' + s_target_partition);
     }
     return (uint8_t)err;
@@ -329,10 +341,10 @@ static uint8_t set_flag_cb(void* user_data, uint8_t boot_partition,
 
     boot_flash_error_t err = boot_flash_write_metadata(&s_flash_ctx, &meta);
     if (err != BOOT_FLASH_OK) {
-        LOG_E(BOOT_TAG, "Metadata 写入失败: err=%d, part=%c, ver=%u",
+        BOOT_TASK_LOG_E( "Metadata 写入失败: err=%d, part=%c, ver=%u",
             err, 'A' + boot_partition, version);
     } else {
-        LOG_I(BOOT_TAG, "Metadata写入成功.");
+        BOOT_TASK_LOG_I( "Metadata写入成功.");
     }
     return (uint8_t)err;
 }
@@ -340,6 +352,6 @@ static uint8_t set_flag_cb(void* user_data, uint8_t boot_partition,
 static void reset_cb(void* user_data)
 {
     (void)user_data;
-    LOG_I(BOOT_TAG, "执行系统复位...");
+    BOOT_TASK_LOG_I( "执行系统复位...");
     // HAL_NVIC_SystemReset();
 }

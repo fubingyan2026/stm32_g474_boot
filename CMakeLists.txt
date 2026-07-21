@@ -59,7 +59,7 @@ aux_source_directory(${CMAKE_SOURCE_DIR}/m_middlewares/algorithm/math MID_math)
 
 # Third_Party 模块
 aux_source_directory(${CMAKE_SOURCE_DIR}/m_middlewares/Third_Party/SEGGER_RTT/RTT MID_SEGGER_RTT)
-aux_source_directory(${CMAKE_SOURCE_DIR}/m_middlewares/Third_Party/ring_strage MID_RING_STRAGE)
+aux_source_directory(${CMAKE_SOURCE_DIR}/m_middlewares/Third_Party/ring_storage MID_RING_STORAGE)
 
 aux_source_directory(${CMAKE_SOURCE_DIR}/service SERVICE)
 aux_source_directory(${CMAKE_SOURCE_DIR}/service/boot SRV_BOOT)
@@ -84,7 +84,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     ${MID_math}
 
     ${MID_SEGGER_RTT}
-    ${MID_RING_STRAGE}
+    ${MID_RING_STORAGE}
 
     ${SRV_BOOT}
 
@@ -114,7 +114,7 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
 
     m_middlewares/Third_Party/SEGGER_RTT/RTT/config
     m_middlewares/Third_Party/SEGGER_RTT/RTT
-    m_middlewares/Third_Party/ring_strage
+    m_middlewares/Third_Party/ring_storage
 )
 
 # Add project symbols (macros)
