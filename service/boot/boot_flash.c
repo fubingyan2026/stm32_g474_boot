@@ -11,6 +11,7 @@
 #include "crc.h"
 #include "drv_stm32g4_flash.h"
 #include "log.h"
+#include "ring_storage.h"
 
 /* Private constants ---------------------------------------------------------*/
 
@@ -33,7 +34,7 @@
 static const uint32_t BOOT_FLASH_BOOT_ADDR = BOOT_FLASH_BASE; /**< 0x08000000 */
 static const uint32_t BOOT_FLASH_APP_A_ADDR = (BOOT_FLASH_BOOT_ADDR + BOOT_FLASH_BOOT_SIZE); /**< 0x08008000 */
 static const uint32_t BOOT_FLASH_APP_B_ADDR = (BOOT_FLASH_APP_A_ADDR + BOOT_FLASH_APP_SIZE); /**< 0x08012000 */
-static const uint32_t BOOT_FLASH_META_ADDR = (BOOT_FLASH_APP_B_ADDR + BOOT_FLASH_APP_SIZE); /**< 0x0801C000 */
+static const uint32_t BOOT_FLASH_META_ADDR = (BOOT_FLASH_APP_B_ADDR + BOOT_FLASH_APP_SIZE); /**< 0x0801B000 */
 
 static inline uint32_t boot_flash_abs_addr(boot_partition_t partition, uint32_t offset)
 {
@@ -49,11 +50,15 @@ uint32_t boot_flash_partition_addr(boot_partition_t partition)
 
 boot_flash_error_t boot_flash_init(boot_flash_context_t* ctx)
 {
+    ring_storage_error_t rs_err;
+    uint32_t page_size;
+
     if (!ctx) {
         return BOOT_FLASH_ERROR_NULL_PTR;
     }
 
     ef_port_init();
+    page_size = ef_port_get_page_size();
 
     /* CRC32 自检: 计算 "123456789" 的 CRC32, 期望 0xCBF43926 */
     {
@@ -68,7 +73,61 @@ boot_flash_error_t boot_flash_init(boot_flash_context_t* ctx)
     }
 
     memset(ctx, 0, sizeof(*ctx));
+
+    /* 初始化 ring_storage 管理 Metadata 区域 */
+    {
+        const ring_storage_config_t cfg = {
+            .start_addr        = BOOT_FLASH_META_ADDR,
+            .area_size         = BOOT_FLASH_META_SIZE,
+            .sector_size       = page_size,
+            .write_gran        = RING_STORAGE_WRITE_GRAN_64,
+            .frame_buffer      = ctx->meta_frame_buf,
+            .frame_buffer_size = sizeof(ctx->meta_frame_buf),
+        };
+
+        rs_err = ring_storage_init(&ctx->meta_storage, &cfg);
+        if (rs_err != RING_STORAGE_OK && rs_err != RING_STORAGE_ERROR_NO_VALID_FRAME) {
+            BOOT_FLASH_LOG_E( "ring_storage init 失败: err=%d", rs_err);
+            return BOOT_FLASH_ERROR_ERASE;
+        }
+
+        /* 注册 metadata 结构体为一个 KV */
+        rs_err = ring_storage_register(&ctx->meta_storage, "meta",
+            &ctx->meta_cache, sizeof(ctx->meta_cache));
+        if (rs_err != RING_STORAGE_OK) {
+            BOOT_FLASH_LOG_E( "ring_storage register 失败: err=%d", rs_err);
+            return BOOT_FLASH_ERROR_ERASE;
+        }
+
+        /* 尝试加载，无有效帧时尝试从旧格式迁移 */
+        rs_err = ring_storage_load(&ctx->meta_storage);
+        if (rs_err == RING_STORAGE_ERROR_NO_VALID_FRAME) {
+            /* 旧格式迁移：检查原 4KB Metadata 位置是否有 raw 数据 */
+            const boot_metadata_t* old_meta =
+                (const boot_metadata_t*)BOOT_FLASH_META_ADDR;
+            if (old_meta->magic == BOOT_METADATA_MAGIC) {
+                BOOT_FLASH_LOG_I( "检测到旧格式 Metadata，迁移至 ring_storage");
+                memcpy(&ctx->meta_cache, old_meta, sizeof(ctx->meta_cache));
+                ring_storage_save(&ctx->meta_storage);
+                rs_err = RING_STORAGE_OK;
+            }
+        }
+    }
+
     ctx->initialized = true;
+
+    /* 初始化完成后打印 Metadata 概览 */
+    if (rs_err == RING_STORAGE_OK) {
+        BOOT_FLASH_LOG_I( "Init: ring_storage ver=%u, meta: part=%c, fw_ver=%u, size=%u, cs=0x%08lX",
+            ctx->meta_storage.latest_version,
+            'A' + ctx->meta_cache.boot_partition,
+            ctx->meta_cache.version,
+            (unsigned int)ctx->meta_cache.fw_size,
+            (unsigned long)ctx->meta_cache.fw_checksum);
+    } else {
+        BOOT_FLASH_LOG_I( "Init: ring_storage ver=%u, 无有效 Metadata",
+            ctx->meta_storage.latest_version);
+    }
     return BOOT_FLASH_OK;
 }
 
@@ -137,17 +196,6 @@ boot_flash_error_t boot_flash_verify_block(boot_flash_context_t* ctx,
     /* 逐字节读回比对 */
     for (i = 0U; i < len; i++) {
         if (flash_ptr[i] != data[i]) {
-            BOOT_FLASH_LOG_E( "Verify FAIL @ offset=%lu+%lu: flash=0x%02X, expect=0x%02X",
-                (unsigned long)offset, (unsigned long)i,
-                flash_ptr[i], data[i]);
-            BOOT_FLASH_LOG_E( "Verify ctx-8: %02X %02X %02X %02X %02X %02X %02X %02X",
-                (i >= 8) ? flash_ptr[i - 8] : 0xFF, (i >= 7) ? flash_ptr[i - 7] : 0xFF,
-                (i >= 6) ? flash_ptr[i - 6] : 0xFF, (i >= 5) ? flash_ptr[i - 5] : 0xFF,
-                (i >= 4) ? flash_ptr[i - 4] : 0xFF, (i >= 3) ? flash_ptr[i - 3] : 0xFF,
-                (i >= 2) ? flash_ptr[i - 2] : 0xFF, (i >= 1) ? flash_ptr[i - 1] : 0xFF);
-            BOOT_FLASH_LOG_E( "Verify ctx+8: %02X %02X %02X %02X %02X %02X %02X %02X",
-                flash_ptr[i], flash_ptr[i + 1], flash_ptr[i + 2], flash_ptr[i + 3],
-                flash_ptr[i + 4], flash_ptr[i + 5], flash_ptr[i + 6], flash_ptr[i + 7]);
             return BOOT_FLASH_ERROR_VERIFY;
         }
     }
@@ -158,6 +206,8 @@ boot_flash_error_t boot_flash_verify_block(boot_flash_context_t* ctx,
 boot_flash_error_t boot_flash_read_metadata(boot_flash_context_t* ctx,
     boot_metadata_t* metadata)
 {
+    ring_storage_error_t rs_err;
+
     if (!ctx || !ctx->initialized) {
         return BOOT_FLASH_ERROR_UNINITIALIZED;
     }
@@ -165,14 +215,27 @@ boot_flash_error_t boot_flash_read_metadata(boot_flash_context_t* ctx,
         return BOOT_FLASH_ERROR_NULL_PTR;
     }
 
-    /* 直接从 Flash 地址读取 Metadata */
-    memcpy(metadata, (const void*)BOOT_FLASH_META_ADDR, sizeof(boot_metadata_t));
+    rs_err = ring_storage_load(&ctx->meta_storage);
+    if (rs_err == RING_STORAGE_ERROR_NO_VALID_FRAME) {
+        /* 无有效帧，返回空结构体（magic 不匹配则上层会进入 bootloader） */
+        memset(metadata, 0, sizeof(*metadata));
+        return BOOT_FLASH_OK;
+    }
+    if (rs_err != RING_STORAGE_OK) {
+        BOOT_FLASH_LOG_E( "ring_storage load 失败: err=%d", rs_err);
+        return BOOT_FLASH_ERROR_VERIFY;
+    }
+
+    /* 从 ring_storage 缓存复制到调用者 buffer */
+    memcpy(metadata, &ctx->meta_cache, sizeof(*metadata));
     return BOOT_FLASH_OK;
 }
 
 boot_flash_error_t boot_flash_write_metadata(boot_flash_context_t* ctx,
     const boot_metadata_t* metadata)
 {
+    ring_storage_error_t rs_err;
+
     if (!ctx || !ctx->initialized) {
         return BOOT_FLASH_ERROR_UNINITIALIZED;
     }
@@ -180,15 +243,20 @@ boot_flash_error_t boot_flash_write_metadata(boot_flash_context_t* ctx,
         return BOOT_FLASH_ERROR_NULL_PTR;
     }
 
-    /* 先擦除 Metadata 页，再写入 */
-    if (ef_port_erase(BOOT_FLASH_META_ADDR, BOOT_FLASH_META_SIZE) != EF_NO_ERR) {
-        return BOOT_FLASH_ERROR_ERASE;
-    }
-    if (ef_port_write(BOOT_FLASH_META_ADDR, (const uint32_t*)metadata,
-            sizeof(boot_metadata_t))
-        != EF_NO_ERR) {
+    /* 复制到 ring_storage 绑定的缓存，然后原子保存 */
+    memcpy(&ctx->meta_cache, metadata, sizeof(ctx->meta_cache));
+    rs_err = ring_storage_save(&ctx->meta_storage);
+    if (rs_err != RING_STORAGE_OK) {
+        BOOT_FLASH_LOG_E( "ring_storage save 失败: err=%d", rs_err);
         return BOOT_FLASH_ERROR_WRITE;
     }
+
+    BOOT_FLASH_LOG_I( "Metadata 写入成功: ring_storage ver=%u, part=%c, fw_ver=%u, cs=0x%08lX",
+        ctx->meta_storage.latest_version,
+        'A' + metadata->boot_partition,
+        metadata->version,
+        (unsigned long)metadata->fw_checksum);
+
     return BOOT_FLASH_OK;
 }
 

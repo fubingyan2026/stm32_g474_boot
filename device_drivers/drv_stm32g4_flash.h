@@ -42,6 +42,7 @@ void ef_port_cache_invalidate(void);
 ef_err_code_t ef_port_read(uint32_t addr, uint32_t* buf, size_t size);
 ef_err_code_t ef_port_erase(uint32_t addr, size_t size);
 ef_err_code_t ef_port_write(uint32_t addr, const uint32_t* buf, size_t size);
+uint32_t ef_port_get_page_size(void);
 
 #ifdef __cplusplus
 }

@@ -18,6 +18,8 @@ extern "C" {
 #include <stdbool.h>
 #include <stdint.h>
 
+#include "ring_storage.h"
+
 /* Exported constants --------------------------------------------------------*/
 
 /** Flash 物理参数 */
@@ -26,11 +28,12 @@ extern "C" {
 
 /** 分区布局 */
 #define BOOT_FLASH_BOOT_SIZE    0x9000U      /**< Bootloader: 36 KB */
-#define BOOT_FLASH_APP_SIZE     0x9000U      /**< App 分区:  108 KB */
-#define BOOT_FLASH_META_SIZE    0x1000U      /**< Metadata: 4 KB (对齐单/双 Bank 最小页) */
+#define BOOT_FLASH_APP_SIZE     0x9000U      /**< App 分区:  36 KB */
+#define BOOT_FLASH_META_SIZE    0x2000U      /**< Metadata: 8 KB (ring_storage 需要 ≥2 扇区) */
 
 /** Metadata 魔数 */
 #define BOOT_METADATA_MAGIC     0x424F4F54U  /**< "BOOT" */
+#define BOOT_META_FRAME_BUF_SIZE  128U       /**< ring_storage 帧缓冲区 */
 
 /* Exported types ------------------------------------------------------------*/
 
@@ -66,7 +69,10 @@ typedef enum {
 typedef struct boot_flash_context boot_flash_context_t;
 
 struct boot_flash_context {
-    bool initialized; /**< 初始化标志 */
+    bool initialized;                          /**< 初始化标志 */
+    ring_storage_context_t meta_storage;       /**< ring_storage 实例 */
+    uint8_t meta_frame_buf[BOOT_META_FRAME_BUF_SIZE]; /**< 帧缓冲区 */
+    boot_metadata_t meta_cache;                /**< Metadata 缓存 */
 };
 
 /* Exported functions prototypes ---------------------------------------------*/

@@ -16,7 +16,6 @@
 #include "drv_systick.h"
 #include "led_task.h"
 #include "log_task.h"
-#include "ring_storage_test_task.h"
 #include "sw_timer.h"
 
 int app_main(void)
@@ -27,9 +26,6 @@ int app_main(void)
     log_task_init();
     /* LED 状态指示 */
     led_task_init();
-
-    /* ring_storage 功能测试 */
-    ring_storage_test_task_init();
 
     /* 启动决策：有有效 App 则跳转，否则进入 bootloader */
     if (!boot_task_try_boot_app())

@@ -79,6 +79,11 @@ static uint32_t GetBankNumber(uint32_t addr)
 
 /* Exported functions --------------------------------------------------------*/
 
+uint32_t ef_port_get_page_size(void)
+{
+    return s_cached_page_size;
+}
+
 void ef_port_init(void)
 {
     if (s_cached_page_size != 0U) {

@@ -54,6 +54,7 @@ static msg_fifo_t s_msg_fifo;
 
 /* Flash 分区管理器 */
 static boot_flash_context_t s_flash_ctx;
+static bool s_flash_inited = false;
 
 /* 状态机实例 */
 static fsm_t s_fsm;
@@ -88,11 +89,13 @@ static void reset_cb(void* user_data);
 
 bool boot_task_try_boot_app(void)
 {
-    boot_flash_context_t flash_ctx;
     boot_metadata_t meta;
 
-    boot_flash_init(&flash_ctx);
-    boot_flash_read_metadata(&flash_ctx, &meta);
+    if (!s_flash_inited) {
+        boot_flash_init(&s_flash_ctx);
+        s_flash_inited = true;
+    }
+    boot_flash_read_metadata(&s_flash_ctx, &meta);
 
     /* 检查 Metadata 有效性 */
     if (meta.magic != BOOT_METADATA_MAGIC) {
@@ -114,7 +117,7 @@ bool boot_task_try_boot_app(void)
     boot_partition_t part = (meta.boot_partition == BOOT_PARTITION_A)
         ? BOOT_PARTITION_A
         : BOOT_PARTITION_B;
-    if (boot_flash_compute_checksum(&flash_ctx, part,
+    if (boot_flash_compute_checksum(&s_flash_ctx, part,
             meta.fw_size, &calculated_checksum)
         != BOOT_FLASH_OK) {
         BOOT_TASK_LOG_E( "分区 %c 校验和计算失败，进入 Bootloader", (part == BOOT_PARTITION_A) ? 'A' : 'B');
@@ -157,11 +160,14 @@ void boot_task_init(void)
     BOOT_TASK_LOG_D( "消息队列已初始化 (%u x %u 字节)",
         BOOT_MSG_FIFO_SIZE, (uint32_t)sizeof(drv_can_msg_t));
 
-    /* 2. 初始化 Flash */
-    flash_err = boot_flash_init(&s_flash_ctx);
-    if (flash_err != BOOT_FLASH_OK) {
-        BOOT_TASK_LOG_E( "Flash 初始化失败: err=%d", flash_err);
-        return;
+    /* 2. 初始化 Flash（如已在 try_boot_app 中初始化则跳过） */
+    if (!s_flash_inited) {
+        flash_err = boot_flash_init(&s_flash_ctx);
+        if (flash_err != BOOT_FLASH_OK) {
+            BOOT_TASK_LOG_E( "Flash 初始化失败: err=%d", flash_err);
+            return;
+        }
+        s_flash_inited = true;
     }
     BOOT_TASK_LOG_D( "Flash 管理器已初始化");
 
