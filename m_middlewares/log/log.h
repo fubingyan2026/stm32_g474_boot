@@ -28,6 +28,22 @@ extern "C" {
 
 #include "kfifo.h"
 
+/* Compile-time switch -------------------------------------------------------*/
+
+/**
+ * @brief 日志编译开关
+ *
+ * 在编译前定义 LOG_ENABLED=0 可彻底剥离所有日志代码（包括字符串常量不进入 .rodata），
+ * 适合正式版固件以节省 Flash。
+ *
+ * 用法：
+ *   cmake -DCMAKE_C_FLAGS="-DLOG_ENABLED=0" ...
+ *   或在 CmakeLists.txt 中添加：target_compile_definitions(... PRIVATE LOG_ENABLED=0)
+ */
+#ifndef LOG_ENABLED
+#define LOG_ENABLED 0
+#endif
+
 /* Exported types ------------------------------------------------------------*/
 
 /**
@@ -91,7 +107,7 @@ typedef struct {
 
 /* 默认配置 */
 #define LOG_DEFAULT_FORMAT_BUFFER_SIZE (256)
-#define LOG_DEFAULT_TX_BUFFER_SIZE     (1024 * 8)
+#define LOG_DEFAULT_TX_BUFFER_SIZE     (1024 * 4)
 #define LOG_DEFAULT_LEVEL              LOG_LEVEL_INFO
 #define LOG_DEFAULT_ENABLE_COLOR       (true)
 #define LOG_DEFAULT_ENABLE_TIMESTAMP   (true)
@@ -108,7 +124,12 @@ typedef struct {
  *
  * 格式: [级别] (时间戳) 标签: 消息\r\n
  * 例如: I (1234) main: Application started
+ *
+ * 当 LOG_ENABLED = 0 时所有日志宏展开为空，
+ * 字符串常量和格式化参数不进入编译，节省 Flash。
  */
+#if LOG_ENABLED
+
 #define LOG_E(tag, ...) log_log(LOG_LEVEL_ERROR, tag, __VA_ARGS__)
 
 #define LOG_W(tag, ...) log_log(LOG_LEVEL_WARN, tag, __VA_ARGS__)
@@ -135,6 +156,22 @@ typedef struct {
  * @brief 十六进制转储宏
  */
 #define LOG_HEXDUMP(tag, data, len) log_hexdump(tag, data, len)
+
+#else /* LOG_ENABLED == 0 — 所有日志完全剥离 */
+
+#define LOG_E(tag, ...)     ((void)0)
+#define LOG_W(tag, ...)     ((void)0)
+#define LOG_I(tag, ...)     ((void)0)
+#define LOG_D(tag, ...)     ((void)0)
+#define LOG_T(tag, ...)     ((void)0)
+
+#define LOG_ENTER()         ((void)0)
+#define LOG_EXIT()          ((void)0)
+#define LOG_EXIT_VAL(val)   ((void)(val))
+
+#define LOG_HEXDUMP(tag, data, len) ((void)(tag))
+
+#endif /* LOG_ENABLED */
 
 /* Exported functions prototypes ---------------------------------------------*/
 

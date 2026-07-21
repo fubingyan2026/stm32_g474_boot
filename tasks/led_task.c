@@ -10,9 +10,12 @@
  */
 
 #include "led_task.h"
+#include "drv_pwm.h"
 #include "drv_systick.h"
 #include "led.h"
+#include "log.h"
 #include "sw_timer.h"
+#include "tim.h"
 
 #define LED_TASK_DEFAULT_BLINK_COUNT 3
 #define LED_TASK_DEFAULT_BLINK_CYCLE_MS 200
@@ -23,10 +26,12 @@
 
 static led_handle_t s_led_handle;
 static sw_timer_t s_led_timer;
+volatile uint32_t breathe_value=0;
 
 static void led_task_write_pin(uint16_t value)
 {
-    (void)value;
+    breathe_value = LED_BREATH_MAX_DUTY_DEFAULT- value;
+    drv_pwm_set_duty(DRV_PWM_CH_1, value);
 }
 
 static void led_task_on_state_change(led_handle_t* instance,
@@ -64,18 +69,25 @@ void led_task_start_blink(uint16_t count, uint16_t cycle_ms)
 
 void led_task_init(void)
 {
+    /* 初始化 PWM 输出 — TIM5_CH1 (PA0) */
+    if (drv_pwm_init(DRV_PWM_CH_1, &htim2, TIM_CHANNEL_1) != DRV_PWM_OK) {
+        LOG_E("led_task", "PWM 初始化失败");
+        return;
+    }
+    if (drv_pwm_start(DRV_PWM_CH_1) != DRV_PWM_OK) {
+        LOG_E("led_task", "PWM 启动失败");
+        return;
+    }
+
     led_init(millis);
 
     led_config_t config = {
         .name = "status",
-        .init_state = LED_STATE_OFF,
+        .init_state = LED_STATE_BREATHING,
         .write_pin = led_task_write_pin,
     };
     led_register_static(&config, &s_led_handle);
     led_set_callbacks(&s_led_handle, led_task_on_state_change, NULL, NULL, NULL);
-
-    led_task_start_blink(LED_TASK_DEFAULT_BLINK_COUNT,
-        LED_TASK_DEFAULT_BLINK_CYCLE_MS);
 
     /* 启动 sw_timer 驱动 LED 刷新 */
     const sw_timer_config_t timer_cfg = {

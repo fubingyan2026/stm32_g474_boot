@@ -21,7 +21,7 @@ Four presets are available: `Debug`, `Release` (`-Os -g0`), `RelWithDebInfo`, `M
 
 ### clangd
 
-`.clangd` points `CompilationDatabase` to `build/Release`. For IDE intellisense, use the Release preset so `compile_commands.json` is available at that path.
+`.clangd` points `CompilationDatabase` to `build/MinSizeRel`. For IDE intellisense, use the MinSizeRel preset so `compile_commands.json` is available at that path. (To switch, edit `.clangd` and reconfigure with the matching preset.)
 
 ## Flash layout
 
@@ -30,9 +30,11 @@ The STM32G474 has 128 KB of internal flash. The linker script (`STM32G474XX_FLAS
 | Region | Address | Size | Notes |
 |--------|---------|------|-------|
 | Bootloader | `0x08000000` | 36 KB | Linked region; contains this project |
-| App A | `0x08009000` | 40 KB | Active/standby firmware slot |
-| App B | `0x08013000` | 40 KB | Alternate firmware slot |
-| Metadata | `0x0801D000` | 4 KB | Aligned to min page size (4 KB); stores `boot_metadata_t` |
+| App A | `0x08009000` | 36 KB | Active/standby firmware slot |
+| App B | `0x08012000` | 36 KB | Alternate firmware slot |
+| Metadata | `0x0801B000` | 4 KB | Aligned to min page size (4 KB); stores `boot_metadata_t` |
+
+> **Note:** Sizes and addresses are computed from macros in [`boot_flash.c`](service/boot/boot_flash.c#L16-L19): `BOOT_FLASH_BOOT_SIZE = 0x9000`, `BOOT_FLASH_APP_SIZE = 0x9000`, `BOOT_FLASH_META_SIZE = 0x1000`. The protocol spec ([`boot_protocol_spec.md`](boot_protocol_spec.md)) documents App partitions as 40 KB — if that is the intended target, the code macros need updating.
 
 The flash driver (`drv_stm32g4_flash`) auto-detects single-bank (4 KB pages) vs. dual-bank (2 KB pages) mode at init by reading the `FLASH->OPTR` DBANK bit, and handles cross-bank erase by splitting operations at bank boundaries.
 
@@ -67,7 +69,7 @@ Reset_Handler (startup_stm32g474xx.s)
        → app_main()                 [tasks/app_main.c]
             → delay_init()
             → log_task_init()
-            → boot_task_try_boot_app()   // Validate App CRC32, jump if valid
+            → boot_task_try_boot_app()   // Validate App checksum, jump if valid
             → boot_task_init()           // Enter bootloader mode if no valid App
             → while(1) { sw_timer_tick(); sw_timer_task() }
 ```
@@ -96,28 +98,28 @@ This project implements a **dual A/B partition** firmware upgrade system over CA
 - 2-byte header (Command + Sequence) per frame
 - 1 KB block checksums (16-bit additive) with checksum at fixed offset (Byte 2-3) to avoid CAN FD padding issues
 - Full-image verification: 32-bit additive checksum (`sum(fw_data) & 0xFFFFFFFF`) instead of CRC32
-- Commands: `START` (0x01), `METADATA` (0x02), `DATA` (0x03), `VERIFY` (0x04), `REBOOT` (0x05), `DATA_END` (0x08), `ACK` (0x10), `NACK` (0x11)
+- Commands: `START` (0x01), `METADATA` (0x02), `DATA` (0x03), `VERIFY` (0x04), `REBOOT` (0x05), `CANCEL` (0x06), `DATA_START` (0x07), `DATA_END` (0x08), `ACK` (0x10), `NACK` (0x11)
 - Support for both Classic CAN (8-byte frames) and CAN FD (up to 64-byte frames), frame size negotiated at START from the discrete set `{8, 12, 16, 20, 24, 32, 48, 64}`
 
 **Boot service layer (`service/boot/`):**
 
 | Component | File | Role |
 |---|---|---|
-| Transport | `boot_transport.c` | Stateless frame encode/decode. Parses all 7 command types and builds ACK/NACK responses. |
+| Transport | `boot_transport.c` | Stateless frame encode/decode. Parses all 10 command types and builds ACK/NACK responses. |
 | FSM | `boot_fsm.c` | Upgrade state machine (5 states: IDLE → START → DATA_TRANSFER → VERIFY_PENDING → REBOOT_PENDING). Uses the `fsm` library's guard matrix for transition validation. Drives the upgrade through callbacks — never touches hardware directly. |
-| Flash | `boot_flash.c` | Partition-aware flash manager. Erases/writes/verifies 40 KB App partitions, manages the metadata page, computes CRC32 over flash. Delegates to `drv_stm32g4_flash` (`ef_port_*` API). |
+| Flash | `boot_flash.c` | Partition-aware flash manager. Erases/writes/verifies App partitions (size defined by `BOOT_FLASH_APP_SIZE`), manages the metadata page, computes checksums over flash. Delegates to `drv_stm32g4_flash` (`ef_port_*` API). |
 
 **Upgrade flow (4 phases):**
-1. **Handshake**: START (negotiate frame size, validate HW compat ID, erase target partition) → METADATA (CRC32 + version)
-2. **Data transfer**: N × DATA frames + 1 × DATA_END per 1 KB block. 16-bit additive checksum per block. Block-level retry on checksum failure. Double-verified: checksum on wire + byte-by-byte read-back after flash write.
-3. **Verify**: Full-image CRC32 computed over the written flash partition, compared with host-provided value.
-4. **Commit & reboot**: Write metadata page (magic `0x424F4F54`, partition, version, CRC32), then NVIC system reset.
+1. **Handshake**: START (negotiate frame size, validate HW compat ID, erase target partition) → METADATA (32-bit additive checksum + version)
+2. **Data transfer**: Per 1 KB block: DATA_START (block index handshake) → N × DATA frames → DATA_END (16-bit additive checksum). Block-level retry (up to 3×) on checksum failure. Double-verified: checksum on wire + byte-by-byte read-back after flash write. CANCEL (0x06) accepted at any time to abort and return to IDLE.
+3. **Verify**: Full-image 32-bit additive checksum computed over the written flash partition, compared with host-provided value.
+4. **Commit & reboot**: Write metadata page (magic `0x424F4F54`, partition, version, checksum), then NVIC system reset.
 
 **CAN FD DLC padding caveat:** CAN FD data lengths are discrete (`{8, 12, 16, 20, 24, 32, 48, 64}`). When a DATA_END frame doesn't exactly fill a discrete length, the host pads with zero bytes. The board-side parser must **cap `rem_len` by free buffer space** rather than trusting the DLC-derived length — see [`can_fd_dlc_padding_fix.md`](can_fd_dlc_padding_fix.md) for the full analysis.
 
 **Boot decision (`boot_task_try_boot_app`):**
-1. Read metadata page at `0x0801C000`
-2. If `magic != 0x424F4F54` or `upgrade_flag != 0` or App CRC32 mismatch → enter bootloader
+1. Read metadata page at `0x0801B000` (computed as `BOOT_FLASH_APP_B_ADDR + BOOT_FLASH_APP_SIZE`)
+2. If `magic != 0x424F4F54` or `upgrade_flag != 0` or App 32-bit additive checksum mismatch → enter bootloader
 3. Otherwise → jump to App (currently commented out; returns `true`)
 
 **A/B swap logic:** New firmware always goes to the *opposite* partition of the currently-active App. The old partition is never erased until the new firmware is fully verified and committed, ensuring an unbrickable update.
@@ -179,7 +181,7 @@ Re-generating from the `.ioc` file **overwrites** `Core/` and `cmake/stm32cubemx
 
 - **MCU**: STM32G474RBTx — Cortex-M4 with FPU, 128 KB Flash (`0x08000000`), 128 KB RAM (`0x20000000`)
 - **Clock**: 160 MHz from HSE + PLL (Voltage Scale 1 + Boost, Flash latency 4)
-- **Linker**: `STM32G474XX_FLASH.ld` — heap 512 B, stack 1024 B, newlib-nano, `--gc-sections`. Only maps bootloader's 32 KB flash region.
+- **Linker**: `STM32G474XX_FLASH.ld` — heap 512 B, stack 1024 B, newlib-nano, `--gc-sections`. Maps bootloader's 36 KB flash region.
 - **Toolchain flags**: `-mcpu=cortex-m4 -mfpu=fpv4-sp-d16 -mfloat-abi=hard`
 - **Peripherals**: SPI1, FDCAN1 (PA11/PA12), FDCAN2 (PB12/PB13), USART1 (DMA TX + IDLE-line RX), TIM1, TIM15, GPIO, DMA
 - No tests, no CI, no formatter/linter configured.

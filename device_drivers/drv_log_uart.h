@@ -38,35 +38,26 @@ typedef enum {
     DRV_LOG_UART_ERROR_TX_BUSY,         /**< TX DMA 忙 */
 } drv_log_uart_error_t;
 
-/**
- * @brief USART1 驱动上下文结构体
- */
-typedef struct {
-    volatile bool tx_busy;      /**< TX DMA 传输中标志 */
-    bool initialized;           /**< 初始化标志 */
-} drv_log_uart_context_t;
-
 /* Exported functions prototypes ---------------------------------------------*/
 
 /* --- 初始化 / 生命周期 --- */
 
-drv_log_uart_error_t drv_log_uart_init(drv_log_uart_context_t* ctx);
-void drv_log_uart_deinit(drv_log_uart_context_t* ctx);
-bool drv_log_uart_is_initialized(const drv_log_uart_context_t* ctx);
+/** @brief 初始化日志串口（内部状态，无需传参） */
+drv_log_uart_error_t drv_log_uart_init(void);
+void drv_log_uart_deinit(void);
+bool drv_log_uart_is_initialized(void);
 
 /* --- TX（日志输出） --- */
 
 /**
  * @brief 非阻塞 DMA 发送
- * @param ctx  驱动上下文指针
  * @param data 数据指针
  * @param len  数据长度
  * @return 操作结果错误码
  */
-drv_log_uart_error_t drv_log_uart_send(drv_log_uart_context_t* ctx,
-    const uint8_t* data, uint32_t len);
+drv_log_uart_error_t drv_log_uart_send(const uint8_t* data, uint32_t len);
 
-bool drv_log_uart_is_tx_busy(const drv_log_uart_context_t* ctx);
+bool drv_log_uart_is_tx_busy(void);
 
 /* --- RX（DMA circular + IDLE 中断 → kfifo） --- */
 

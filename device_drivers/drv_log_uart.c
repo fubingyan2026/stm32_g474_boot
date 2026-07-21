@@ -25,6 +25,9 @@
 /** @brief DMA circular 接收缓冲区大小（字节，必须为2的幂） */
 #define DRV_LOG_UART_RX_CIRC_BUF_SIZE (1024U)
 
+/** @brief 日志串口 HAL 句柄（来自 CubeMX usart.c: USART1） */
+#define LOG_HUART (&huart1)
+
 /* Private variables ---------------------------------------------------------*/
 
 /** @brief USART1 RX DMA circular 缓冲区 */
@@ -33,8 +36,11 @@ static uint8_t s_rx_dma_buf[DRV_LOG_UART_RX_CIRC_BUF_SIZE];
 /** @brief 接收 FIFO 实例 */
 static kfifo_t s_rx_fifo;
 
-/** @brief 当前激活的日志串口上下文 */
-static drv_log_uart_context_t* s_active_ctx = NULL;
+/** @brief TX DMA 传输中标志 */
+static volatile bool s_tx_busy;
+
+/** @brief 初始化标志 */
+static bool s_initialized;
 
 /* Private function prototypes -----------------------------------------------*/
 
@@ -43,81 +49,68 @@ static void drv_log_uart_sync_rx_dma(void);
 /* Exported functions --------------------------------------------------------*/
 
 /**
- * @brief 初始化日志串口驱动
- * @param ctx 驱动上下文指针
+ * @brief 初始化日志串口驱动（内部状态，直接使用 CubeMX 的 huart1）
  * @return 操作结果错误码
  */
-drv_log_uart_error_t drv_log_uart_init(drv_log_uart_context_t* ctx)
+drv_log_uart_error_t drv_log_uart_init(void)
 {
-    if (!ctx) {
-        return DRV_LOG_UART_ERROR_NULL_PTR;
+    if (s_initialized) {
+        drv_log_uart_deinit();
     }
 
-    if (ctx->initialized) {
-        drv_log_uart_deinit(ctx);
-    }
-
-    ctx->tx_busy = false;
-    ctx->initialized = false;
+    s_tx_busy = false;
+    s_initialized = false;
 
     kfifo_init(&s_rx_fifo, s_rx_dma_buf, sizeof(s_rx_dma_buf), NULL);
 
-    if (HAL_UARTEx_ReceiveToIdle_DMA(&huart1, s_rx_dma_buf, sizeof(s_rx_dma_buf)) != HAL_OK) {
+    if (HAL_UARTEx_ReceiveToIdle_DMA(LOG_HUART, s_rx_dma_buf, sizeof(s_rx_dma_buf)) != HAL_OK) {
         return DRV_LOG_UART_ERROR_UNINITIALIZED;
     }
 
-    ctx->initialized = true;
-    s_active_ctx = ctx;
+    s_initialized = true;
 
     return DRV_LOG_UART_OK;
 }
 
 /**
  * @brief 反初始化日志串口驱动
- * @param ctx 驱动上下文指针
  */
-void drv_log_uart_deinit(drv_log_uart_context_t* ctx)
+void drv_log_uart_deinit(void)
 {
-    if (!ctx) {
+    if (!s_initialized) {
         return;
     }
 
-    if (s_active_ctx == ctx) {
-        __HAL_UART_DISABLE_IT(&huart1, UART_IT_IDLE);
-        HAL_UART_DMAStop(&huart1);
-        s_active_ctx = NULL;
-        kfifo_reset(&s_rx_fifo);
-    }
+    __HAL_UART_DISABLE_IT(LOG_HUART, UART_IT_IDLE);
+    HAL_UART_DMAStop(LOG_HUART);
+    kfifo_reset(&s_rx_fifo);
 
-    ctx->tx_busy = false;
-    ctx->initialized = false;
+    s_tx_busy = false;
+    s_initialized = false;
 }
 
 /**
  * @brief 检查驱动是否已初始化
- * @param ctx 驱动上下文指针
  * @return true表示已初始化，false表示未初始化
  */
-bool drv_log_uart_is_initialized(const drv_log_uart_context_t* ctx)
+bool drv_log_uart_is_initialized(void)
 {
-    return ctx ? ctx->initialized : false;
+    return s_initialized;
 }
 
 /**
  * @brief 非阻塞 DMA 发送
- * @param ctx  驱动上下文指针
  * @param data 数据指针
  * @param len  数据长度
  * @return 操作结果错误码
  */
-drv_log_uart_error_t drv_log_uart_send(drv_log_uart_context_t* ctx,
-    const uint8_t* data, uint32_t len)
+drv_log_uart_error_t drv_log_uart_send(const uint8_t* data, uint32_t len)
 {
-    if (!ctx || !data) {
+    if (!data) {
         return DRV_LOG_UART_ERROR_NULL_PTR;
     }
 
-    if (!ctx->initialized) {
+    if (!s_initialized) {
         return DRV_LOG_UART_ERROR_UNINITIALIZED;
     }
 
@@ -125,31 +118,30 @@ drv_log_uart_error_t drv_log_uart_send(drv_log_uart_context_t* ctx,
         return DRV_LOG_UART_OK;
     }
 
-    if (ctx->tx_busy || huart1.gState != HAL_UART_STATE_READY) {
+    if (s_tx_busy || LOG_HUART->gState != HAL_UART_STATE_READY) {
         return DRV_LOG_UART_ERROR_TX_BUSY;
     }
 
-    if (HAL_UART_Transmit_DMA(&huart1, (uint8_t*)data, (uint16_t)len) != HAL_OK) {
+    if (HAL_UART_Transmit_DMA(LOG_HUART, (uint8_t*)data, (uint16_t)len) != HAL_OK) {
         return DRV_LOG_UART_ERROR_TX_BUSY;
     }
 
-    ctx->tx_busy = true;
+    s_tx_busy = true;
 
     return DRV_LOG_UART_OK;
 }
 
 /**
  * @brief 查询 TX DMA 是否忙碌
- * @param ctx 驱动上下文指针
  * @return true表示正在发送
  */
-bool drv_log_uart_is_tx_busy(const drv_log_uart_context_t* ctx)
+bool drv_log_uart_is_tx_busy(void)
 {
-    if (!ctx || !ctx->initialized) {
+    if (!s_initialized) {
         return false;
     }
 
-    return ctx->tx_busy || huart1.gState != HAL_UART_STATE_READY;
+    return s_tx_busy || LOG_HUART->gState != HAL_UART_STATE_READY;
 }
 
 /**
@@ -182,8 +174,8 @@ uint32_t drv_log_uart_rx_available(void)
  */
 void HAL_UART_TxCpltCallback(UART_HandleTypeDef* huart)
 {
-    if (huart == &huart1 && s_active_ctx) {
-        s_active_ctx->tx_busy = false;
+    if (huart == LOG_HUART) {
+        s_tx_busy = false;
     }
 }
 
@@ -196,7 +188,7 @@ void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef* huart, uint16_t Size)
 {
     (void)Size;
 
-    if (huart == &huart1) {
+    if (huart == LOG_HUART) {
         drv_log_uart_sync_rx_dma();
     }
 }
@@ -210,11 +202,11 @@ void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef* huart, uint16_t Size)
  */
 static void drv_log_uart_sync_rx_dma(void)
 {
-    if (!s_active_ctx || !huart1.hdmarx) {
+    if (!s_initialized || !LOG_HUART->hdmarx) {
         return;
     }
 
-    const uint32_t remaining = __HAL_DMA_GET_COUNTER(huart1.hdmarx);
+    const uint32_t remaining = __HAL_DMA_GET_COUNTER(LOG_HUART->hdmarx);
     const uint32_t dma_hw_index = sizeof(s_rx_dma_buf) - remaining;
 
     kfifo_move_in(&s_rx_fifo, dma_hw_index);

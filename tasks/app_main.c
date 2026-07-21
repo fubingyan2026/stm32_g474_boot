@@ -25,7 +25,7 @@ int app_main(void)
     /* 日志输出（UART DMA） */
     log_task_init();
     /* LED 状态指示 */
-    // led_task_init();
+    led_task_init();
 
     /* 启动决策：有有效 App 则跳转，否则进入 bootloader */
     if (!boot_task_try_boot_app())

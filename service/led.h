@@ -105,7 +105,7 @@ typedef void (*led_edge_cb_t)(led_handle_t* instance, bool rising,
 #define LED_BREATH_CYCLE_MS_DEFAULT  (2000U)
 #define LED_BREATH_STEP_MS_DEFAULT   (30U)
 #define LED_BREATH_MIN_DUTY_DEFAULT  (0U)
-#define LED_BREATH_MAX_DUTY_DEFAULT  (1023U)
+#define LED_BREATH_MAX_DUTY_DEFAULT  (1024U)
 
 /**
  * @brief LED 配置
