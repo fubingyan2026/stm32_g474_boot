@@ -13,7 +13,6 @@
 #include "boot_fsm.h"
 #include "boot_transport.h"
 #include "drv_can.h"
-#include "drv_stm32g4_flash.h"
 #include "fdcan.h"
 #include "fsm.h"
 #include "log.h"

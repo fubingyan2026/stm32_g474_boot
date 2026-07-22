@@ -1,7 +1,7 @@
 /**
  * @file    ring_storage.c
  * @brief   环形缓冲区 Flash 参数存储模块 - 核心实现
- * @author  FOC Development Team
+ * @author  maximilian
  * @version V1.0.0
  * @date    2026-07-21
  *
@@ -12,16 +12,17 @@
  *            0     magic            4B      0x52535446 ("RSTF")
  *            4     version          4B      单调递增版本号
  *            8     frame_len        4B      帧总逻辑大小（含头尾）
- *           12     kv_count         2B      KV 条目数
- *           14     header_crc16     2B      帧头 CRC16（偏移 0~13）
- *           16     KV 数据区        N B     [klen(1)][key][vlen(2)][val]...
- *          16+N   data_crc32       4B      KV 数据区 CRC32
- *          20+N   commit_magic     4B      0x434F4D54 ("COMT") 提交点
+ *           12     kv_count         4B      KV 条目数
+ *           16     header_crc32     4B      帧头 CRC32（偏移 0~15）
+ *           20     KV 数据区        N B     [klen(1)][key][vlen(2)][val]...
+ *          20+N   data_crc32       4B      KV 数据区 CRC32
+ *          24+N   commit_magic     4B      0x434F4D54 ("COMT") 提交点
  *
  * @par 断电保护
  *          commit_magic 是最后写入的字段。若写入中断：
  *          - commit_magic 未写入（0xFFFFFFFF）→ 帧不完整，跳过
  *          - commit_magic 已写入但 data_crc32 不匹配 → 数据损坏，跳过
+ *          header_crc32 保护帧头（offset 0~15），data_crc32 保护 KV 数据区。
  *          STM32G4 双字编程下，data_crc32 + commit_magic 共 8B 一次写入，原子性保证。
  */
 
@@ -31,7 +32,6 @@
 
 #include <string.h>
 
-#include "algorithm/crc.h"      /* get_CRC16_check_sum */
 #include "rs_crc32.h"           /* rs_crc32 */
 #include "log.h"                /* LOG_I / LOG_E */
 
@@ -60,7 +60,7 @@
 #define RS_FLASH_EMPTY                 0xFFFFFFFFu
 
 /* 帧头大小（字节） */
-#define RS_HEADER_SIZE                 16u
+#define RS_HEADER_SIZE                 20u
 /* 帧尾大小（字节） */
 #define RS_FOOTER_SIZE                 8u
 /* 帧固定开销 */
@@ -68,13 +68,13 @@
 
 /* Private types -------------------------------------------------------------*/
 
-/* 帧头结构（紧凑，16 字节） */
+/* 帧头结构（紧凑，20 字节） */
 typedef struct __attribute__((packed)) {
     uint32_t magic;             /**< 帧魔数 */
     uint32_t version;           /**< 版本号 */
     uint32_t frame_len;         /**< 帧总逻辑大小 */
-    uint16_t kv_count;          /**< KV 条目数 */
-    uint16_t header_crc16;      /**< 帧头 CRC16 */
+    uint32_t kv_count;          /**< KV 条目数 */
+    uint32_t header_crc32;      /**< 帧头 CRC32（覆盖偏移 0~15） */
 } rs_header_t;
 
 /* 帧尾结构（紧凑，8 字节） */
@@ -107,7 +107,7 @@ static ring_storage_error_t rs_gc_collect(ring_storage_context_t* ctx);
 static size_t rs_serialize_kv(ring_storage_context_t* ctx, uint8_t* buf, size_t buf_size);
 static ring_storage_error_t rs_parse_and_load_kv(ring_storage_context_t* ctx,
                                                   const uint8_t* data, size_t data_len,
-                                                  uint16_t kv_count);
+                                                  uint32_t kv_count);
 static ring_storage_error_t rs_load_frame(ring_storage_context_t* ctx,
                                            uint32_t frame_addr);
 
@@ -184,7 +184,7 @@ static bool rs_is_sector_empty(ring_storage_context_t* ctx, uint32_t sec_addr) {
  * @param   ctx 上下文指针
  * @return  操作结果错误码
  * @note    扫描策略：在每个扇区内顺序查找帧 magic（0x52535446），
- *          校验帧头 CRC16 和帧尾 commit_magic + data_crc32，
+ *          校验帧头 CRC32 和帧尾 commit_magic + data_crc32，
  *          选择 version 最大的有效帧。
  *          版本号比较使用差值法处理 32 位回绕。
  */
@@ -227,11 +227,9 @@ static ring_storage_error_t rs_scan_for_latest_frame(ring_storage_context_t* ctx
                 continue;
             }
 
-            /* magic 匹配，校验帧头 CRC16 */
-            const uint16_t calc_crc = get_CRC16_check_sum((uint8_t*)&hdr,
-                                                          offsetof(rs_header_t, header_crc16),
-                                                          0xFFFF);
-            if (calc_crc != hdr.header_crc16) {
+            /* magic 匹配，校验帧头 CRC32 */
+            const uint32_t calc_crc = rs_crc32(&hdr, offsetof(rs_header_t, header_crc32));
+            if (calc_crc != hdr.header_crc32) {
                 /* 帧头损坏，前进一个对齐单位 */
                 scan_addr += RS_WRITE_ALIGN(ctx);
                 continue;
@@ -477,10 +475,10 @@ static size_t rs_serialize_kv(ring_storage_context_t* ctx, uint8_t* buf, size_t 
  */
 static ring_storage_error_t rs_parse_and_load_kv(ring_storage_context_t* ctx,
                                                   const uint8_t* data, size_t data_len,
-                                                  uint16_t kv_count) {
+                                                  uint32_t kv_count) {
     size_t offset = 0;
 
-    for (uint16_t i = 0; i < kv_count; i++) {
+    for (uint32_t i = 0; i < kv_count; i++) {
         /* 读 key_len */
         if (offset + 1 > data_len) {
             return RING_STORAGE_ERROR_CRC;
@@ -712,9 +710,7 @@ ring_storage_error_t ring_storage_save(ring_storage_context_t* ctx) {
     hdr->version = ctx->latest_version + 1; /* 版本号递增 */
     hdr->frame_len = (uint32_t)frame_len;
     hdr->kv_count = ctx->kv_count;
-    hdr->header_crc16 = get_CRC16_check_sum(buf,
-                                            offsetof(rs_header_t, header_crc16),
-                                            0xFFFF);
+    hdr->header_crc32 = rs_crc32(buf, offsetof(rs_header_t, header_crc32));
 
     /* 计算数据 CRC32 */
     const uint32_t data_crc = rs_crc32(buf + RS_HEADER_SIZE, kv_data_len);
@@ -796,11 +792,9 @@ static ring_storage_error_t rs_load_frame(ring_storage_context_t* ctx,
         return RING_STORAGE_ERROR_CRC;
     }
 
-    const uint16_t calc_crc = get_CRC16_check_sum((uint8_t*)&hdr,
-                                                  offsetof(rs_header_t, header_crc16),
-                                                  0xFFFF);
-    if (calc_crc != hdr.header_crc16) {
-        RING_STORAGE_LOG_E( "加载：帧头 CRC16 校验失败 @0x%08X", frame_addr);
+    const uint32_t calc_crc = rs_crc32(&hdr, offsetof(rs_header_t, header_crc32));
+    if (calc_crc != hdr.header_crc32) {
+        RING_STORAGE_LOG_E( "加载：帧头 CRC32 校验失败 @0x%08X", frame_addr);
         ring_storage_port_unlock();
         return RING_STORAGE_ERROR_CRC;
     }
@@ -922,11 +916,9 @@ ring_storage_error_t ring_storage_load_version(ring_storage_context_t* ctx,
                 continue;
             }
 
-            /* 校验帧头 CRC16 */
-            const uint16_t calc_crc = get_CRC16_check_sum((uint8_t*)&hdr,
-                                                          offsetof(rs_header_t, header_crc16),
-                                                          0xFFFF);
-            if (calc_crc != hdr.header_crc16) {
+            /* 校验帧头 CRC32 */
+            const uint32_t calc_crc = rs_crc32(&hdr, offsetof(rs_header_t, header_crc32));
+            if (calc_crc != hdr.header_crc32) {
                 scan_addr += RS_WRITE_ALIGN(ctx);
                 continue;
             }

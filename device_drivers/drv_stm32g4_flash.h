@@ -1,51 +1,38 @@
-//
-// Created by maximillian on 2026-07-06.
-//
+/**
+ * @file    drv_stm32g4_flash.h
+ * @brief   STM32G474 Flash 底层驱动 — 适配 hal_flash 抽象层
+ *
+ * 导出 g4_ops (VTable) 和 g4_priv (私有数据) 供 HAL 层引用。
+ * 仅在定义了 HAL_FLASH_CHIP_STM32G4 时内容可见。
+ */
 
 #ifndef __DRV_STM32G4_FLASH_H
 #define __DRV_STM32G4_FLASH_H
+
+#include "hal_flash_base.h"
+
+#ifdef HAL_FLASH_CHIP_STM32G4
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-/* Includes ------------------------------------------------------------------*/
-#include <stddef.h>
-#include <stdint.h>
+/* ====== G4 私有数据类型 ====================================================*/
 
-/* Exported types ------------------------------------------------------------*/
+typedef struct {
+    uint32_t page_size;
+    uint32_t bank_size;
+} g4_priv_data_t;
 
-typedef enum {
-    EF_NO_ERR = 0, /**< 操作成功 */
-    EF_ERASE_ERR, /**< 擦除失败 */
-    EF_READ_ERR, /**< 读取失败 */
-    EF_WRITE_ERR, /**< 写入失败 */
-    EF_ENV_INIT_FAILED, /**< 环境变量初始化失败 */
-    EF_ENV_FULL, /**< 环境变量存储区已满 */
-    EF_ENV_ERR, /**< 环境变量错误 */
-} ef_err_code_t;
+/* ====== 导出符号 ===========================================================*/
 
-/* Exported macro ------------------------------------------------------------*/
-
-#define EF_ASSERT(expr)      \
-    do {                     \
-        if (!(expr)) {       \
-            __disable_irq(); \
-            while (1) { }    \
-        }                    \
-    } while (0)
-
-/* Exported functions prototypes ---------------------------------------------*/
-
-void ef_port_init(void);
-void ef_port_cache_invalidate(void);
-ef_err_code_t ef_port_read(uint32_t addr, uint32_t* buf, size_t size);
-ef_err_code_t ef_port_erase(uint32_t addr, size_t size);
-ef_err_code_t ef_port_write(uint32_t addr, const uint32_t* buf, size_t size);
-uint32_t ef_port_get_page_size(void);
+extern g4_priv_data_t g4_priv;
+extern hal_flash_dev_t g4_dev;
 
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* HAL_FLASH_CHIP_STM32G4 */
 
 #endif /* __DRV_STM32G4_FLASH_H */

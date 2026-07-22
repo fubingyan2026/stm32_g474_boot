@@ -9,14 +9,14 @@
 #include <string.h>
 
 #include "crc.h"
-#include "drv_stm32g4_flash.h"
+#include "hal_flash.h"
 #include "log.h"
 #include "ring_storage.h"
 
 /* Private constants ---------------------------------------------------------*/
 
 /** @brief 本文件日志开关：置 0 屏蔽本文件全部打印 */
-#define BOOT_FLASH_LOG_ENABLE 0
+#define BOOT_FLASH_LOG_ENABLE 1
 
 #if BOOT_FLASH_LOG_ENABLE
 #define BOOT_FLASH_LOG_E(...) LOG_E("boot_flash", __VA_ARGS__)
@@ -31,10 +31,10 @@
 #endif
 
 /* Private functions ---------------------------------------------------------*/
-static const uint32_t BOOT_FLASH_BOOT_ADDR = BOOT_FLASH_BASE; /**< 0x08000000 */
-static const uint32_t BOOT_FLASH_APP_A_ADDR = (BOOT_FLASH_BOOT_ADDR + BOOT_FLASH_BOOT_SIZE); /**< 0x08008000 */
-static const uint32_t BOOT_FLASH_APP_B_ADDR = (BOOT_FLASH_APP_A_ADDR + BOOT_FLASH_APP_SIZE); /**< 0x08012000 */
-static const uint32_t BOOT_FLASH_META_ADDR = (BOOT_FLASH_APP_B_ADDR + BOOT_FLASH_APP_SIZE); /**< 0x0801B000 */
+static inline uint32_t boot_flash_base(void)
+{
+    return hal_flash_get_caps()->addr;
+}
 
 static inline uint32_t boot_flash_abs_addr(boot_partition_t partition, uint32_t offset)
 {
@@ -45,7 +45,10 @@ static inline uint32_t boot_flash_abs_addr(boot_partition_t partition, uint32_t 
 
 uint32_t boot_flash_partition_addr(boot_partition_t partition)
 {
-    return (partition == BOOT_PARTITION_A) ? BOOT_FLASH_APP_A_ADDR : BOOT_FLASH_APP_B_ADDR;
+    const uint32_t base = boot_flash_base();
+    return (partition == BOOT_PARTITION_A)
+        ? (base + BOOT_FLASH_BOOT_SIZE)
+        : (base + BOOT_FLASH_BOOT_SIZE + BOOT_FLASH_APP_SIZE);
 }
 
 boot_flash_error_t boot_flash_init(boot_flash_context_t* ctx)
@@ -57,8 +60,15 @@ boot_flash_error_t boot_flash_init(boot_flash_context_t* ctx)
         return BOOT_FLASH_ERROR_NULL_PTR;
     }
 
-    ef_port_init();
-    page_size = ef_port_get_page_size();
+    {
+        hal_flash_err_t flash_err = hal_flash_init();
+        if (flash_err != HAL_FLASH_OK) {
+            BOOT_FLASH_LOG_E("hal_flash 初始化失败: %s (err=%d)",
+                hal_flash_err_str(flash_err), flash_err);
+            return BOOT_FLASH_ERROR_ERASE;
+        }
+    }
+    page_size = hal_flash_get_caps()->erase_size;
 
     /* CRC32 自检: 计算 "123456789" 的 CRC32, 期望 0xCBF43926 */
     {
@@ -77,7 +87,7 @@ boot_flash_error_t boot_flash_init(boot_flash_context_t* ctx)
     /* 初始化 ring_storage 管理 Metadata 区域 */
     {
         const ring_storage_config_t cfg = {
-            .start_addr        = BOOT_FLASH_META_ADDR,
+            .start_addr        = boot_flash_base() + BOOT_FLASH_BOOT_SIZE + BOOT_FLASH_APP_SIZE * 2,
             .area_size         = BOOT_FLASH_META_SIZE,
             .sector_size       = page_size,
             .write_gran        = RING_STORAGE_WRITE_GRAN_64,
@@ -87,7 +97,7 @@ boot_flash_error_t boot_flash_init(boot_flash_context_t* ctx)
 
         rs_err = ring_storage_init(&ctx->meta_storage, &cfg);
         if (rs_err != RING_STORAGE_OK && rs_err != RING_STORAGE_ERROR_NO_VALID_FRAME) {
-            BOOT_FLASH_LOG_E( "ring_storage init 失败: err=%d", rs_err);
+            BOOT_FLASH_LOG_E( "ring_storage 初始化失败: err=%d", rs_err);
             return BOOT_FLASH_ERROR_ERASE;
         }
 
@@ -95,46 +105,42 @@ boot_flash_error_t boot_flash_init(boot_flash_context_t* ctx)
         rs_err = ring_storage_register(&ctx->meta_storage, "meta",
             &ctx->meta_cache, sizeof(ctx->meta_cache));
         if (rs_err != RING_STORAGE_OK) {
-            BOOT_FLASH_LOG_E( "ring_storage register 失败: err=%d", rs_err);
+            BOOT_FLASH_LOG_E( "ring_storage 注册失败: err=%d", rs_err);
             return BOOT_FLASH_ERROR_ERASE;
         }
 
-        /* 尝试加载，无有效帧时尝试从旧格式迁移 */
+        /* 尝试加载 */
         rs_err = ring_storage_load(&ctx->meta_storage);
+    }
+
+    /* 更新上电启动次数，始终保存以确保持久化。
+     * 单次 save 开销 ~200μs（追加写入，无 GC 时无需擦除），
+     * GC 约每 40 帧触发一次（擦除 4KB ~16ms），分摊后每次 save 约 +400μs。
+     * 以 STM32G4 Flash 10000 次擦写寿命计算，可支持 ~400000 次启动。 */
+    {
         if (rs_err == RING_STORAGE_ERROR_NO_VALID_FRAME) {
-            /* 旧格式迁移：检查原 4KB Metadata 位置是否有 raw 数据 */
-            const boot_metadata_t* old_meta =
-                (const boot_metadata_t*)BOOT_FLASH_META_ADDR;
-            if (old_meta->magic == BOOT_METADATA_MAGIC) {
-                BOOT_FLASH_LOG_I( "检测到旧格式 Metadata，迁移至 ring_storage");
-                memcpy(&ctx->meta_cache, old_meta, sizeof(ctx->meta_cache));
-                ring_storage_save(&ctx->meta_storage);
-                rs_err = RING_STORAGE_OK;
-            }
+            ctx->meta_cache.magic = BOOT_METADATA_MAGIC;
         }
+        ctx->meta_cache.reboot_counts++;
+        ring_storage_save(&ctx->meta_storage);
     }
 
     ctx->initialized = true;
 
     /* 初始化完成后打印 Metadata 概览 */
-    if (rs_err == RING_STORAGE_OK) {
-        BOOT_FLASH_LOG_I( "Init: ring_storage ver=%u, meta: part=%c, fw_ver=%u, size=%u, cs=0x%08lX",
-            ctx->meta_storage.latest_version,
-            'A' + ctx->meta_cache.boot_partition,
-            ctx->meta_cache.version,
-            (unsigned int)ctx->meta_cache.fw_size,
-            (unsigned long)ctx->meta_cache.fw_checksum);
-    } else {
-        BOOT_FLASH_LOG_I( "Init: ring_storage ver=%u, 无有效 Metadata",
-            ctx->meta_storage.latest_version);
-    }
+    BOOT_FLASH_LOG_I( "初始化: rs版本=%u, 启动次数=%u, 分区=%c, 固件版本=%u, 大小=%u, 校验和=0x%08lX",
+        ctx->meta_storage.latest_version,
+        (unsigned int)ctx->meta_cache.reboot_counts,
+        'A' + ctx->meta_cache.boot_partition,
+        ctx->meta_cache.version,
+        (unsigned int)ctx->meta_cache.fw_size,
+        (unsigned long)ctx->meta_cache.fw_checksum);
     return BOOT_FLASH_OK;
 }
 
 boot_flash_error_t boot_flash_erase_partition(boot_flash_context_t* ctx,
     boot_partition_t partition)
 {
-    uint32_t addr;
     if (!ctx || !ctx->initialized) {
         return BOOT_FLASH_ERROR_UNINITIALIZED;
     }
@@ -142,9 +148,15 @@ boot_flash_error_t boot_flash_erase_partition(boot_flash_context_t* ctx,
         return BOOT_FLASH_ERROR_INVALID_PARAM;
     }
 
-    addr = boot_flash_partition_addr(partition);
-    if (ef_port_erase(addr, BOOT_FLASH_APP_SIZE) != EF_NO_ERR) {
-        return BOOT_FLASH_ERROR_ERASE;
+    {
+        const uint32_t offset = boot_flash_partition_addr(partition) - boot_flash_base();
+        hal_flash_err_t flash_err = hal_flash_erase(offset, BOOT_FLASH_APP_SIZE);
+        if (flash_err != HAL_FLASH_OK) {
+            BOOT_FLASH_LOG_E("分区%c 擦除失败: %s (err=%d)",
+                (partition == BOOT_PARTITION_A) ? 'A' : 'B',
+                hal_flash_err_str(flash_err), flash_err);
+            return BOOT_FLASH_ERROR_ERASE;
+        }
     }
     return BOOT_FLASH_OK;
 }
@@ -153,7 +165,6 @@ boot_flash_error_t boot_flash_write_block(boot_flash_context_t* ctx,
     boot_partition_t partition, uint32_t offset,
     const uint8_t* data, uint32_t len)
 {
-    uint32_t addr;
     if (!ctx || !ctx->initialized) {
         return BOOT_FLASH_ERROR_UNINITIALIZED;
     }
@@ -164,9 +175,16 @@ boot_flash_error_t boot_flash_write_block(boot_flash_context_t* ctx,
         return BOOT_FLASH_ERROR_INVALID_PARAM;
     }
 
-    addr = boot_flash_abs_addr(partition, offset);
-    if (ef_port_write(addr, (const uint32_t*)data, len) != EF_NO_ERR) {
-        return BOOT_FLASH_ERROR_WRITE;
+    {
+        const uint32_t flash_off = boot_flash_abs_addr(partition, offset) - boot_flash_base();
+        hal_flash_err_t flash_err = hal_flash_write(flash_off, data, len);
+        if (flash_err != HAL_FLASH_OK) {
+            BOOT_FLASH_LOG_E("分区%c 写入失败: %s (err=%d), offset=%lu, len=%lu",
+                (partition == BOOT_PARTITION_A) ? 'A' : 'B',
+                hal_flash_err_str(flash_err), flash_err,
+                (unsigned long)offset, (unsigned long)len);
+            return BOOT_FLASH_ERROR_WRITE;
+        }
     }
     return BOOT_FLASH_OK;
 }
@@ -175,10 +193,6 @@ boot_flash_error_t boot_flash_verify_block(boot_flash_context_t* ctx,
     boot_partition_t partition, uint32_t offset,
     const uint8_t* data, uint32_t len)
 {
-    uint32_t addr;
-    uint32_t i;
-    const uint8_t* flash_ptr;
-
     if (!ctx || !ctx->initialized) {
         return BOOT_FLASH_ERROR_UNINITIALIZED;
     }
@@ -186,15 +200,13 @@ boot_flash_error_t boot_flash_verify_block(boot_flash_context_t* ctx,
         return BOOT_FLASH_ERROR_INVALID_PARAM;
     }
 
-    addr = boot_flash_abs_addr(partition, offset);
-
     /* 确保 D-Cache 中无此地址区的旧数据 */
-    ef_port_cache_invalidate();
+    hal_flash_cache_invalidate();
 
-    flash_ptr = (const uint8_t*)addr;
+    const uint8_t* flash_ptr = (const uint8_t*)boot_flash_abs_addr(partition, offset);
 
     /* 逐字节读回比对 */
-    for (i = 0U; i < len; i++) {
+    for (uint32_t i = 0U; i < len; i++) {
         if (flash_ptr[i] != data[i]) {
             return BOOT_FLASH_ERROR_VERIFY;
         }
@@ -222,7 +234,7 @@ boot_flash_error_t boot_flash_read_metadata(boot_flash_context_t* ctx,
         return BOOT_FLASH_OK;
     }
     if (rs_err != RING_STORAGE_OK) {
-        BOOT_FLASH_LOG_E( "ring_storage load 失败: err=%d", rs_err);
+        BOOT_FLASH_LOG_E( "ring_storage 加载失败: err=%d", rs_err);
         return BOOT_FLASH_ERROR_VERIFY;
     }
 
@@ -243,16 +255,21 @@ boot_flash_error_t boot_flash_write_metadata(boot_flash_context_t* ctx,
         return BOOT_FLASH_ERROR_NULL_PTR;
     }
 
-    /* 复制到 ring_storage 绑定的缓存，然后原子保存 */
-    memcpy(&ctx->meta_cache, metadata, sizeof(ctx->meta_cache));
+    /* 复制到 ring_storage 绑定的缓存（保留 reboot_counts 不被覆盖） */
+    {
+        const uint32_t saved_reboot = ctx->meta_cache.reboot_counts;
+        memcpy(&ctx->meta_cache, metadata, sizeof(ctx->meta_cache));
+        ctx->meta_cache.reboot_counts = saved_reboot;
+    }
     rs_err = ring_storage_save(&ctx->meta_storage);
     if (rs_err != RING_STORAGE_OK) {
-        BOOT_FLASH_LOG_E( "ring_storage save 失败: err=%d", rs_err);
+        BOOT_FLASH_LOG_E( "ring_storage 保存失败: err=%d", rs_err);
         return BOOT_FLASH_ERROR_WRITE;
     }
 
-    BOOT_FLASH_LOG_I( "Metadata 写入成功: ring_storage ver=%u, part=%c, fw_ver=%u, cs=0x%08lX",
+    BOOT_FLASH_LOG_I( "Metadata 写入: rs版本=%u, 启动次数=%u, 分区=%c, 固件版本=%u, 校验和=0x%08lX",
         ctx->meta_storage.latest_version,
+        (unsigned int)ctx->meta_cache.reboot_counts,
         'A' + metadata->boot_partition,
         metadata->version,
         (unsigned long)metadata->fw_checksum);
@@ -263,7 +280,6 @@ boot_flash_error_t boot_flash_write_metadata(boot_flash_context_t* ctx,
 boot_flash_error_t boot_flash_compute_crc32(boot_flash_context_t* ctx,
     boot_partition_t partition, uint32_t size, uint32_t* crc32)
 {
-    uint32_t addr;
     if (!ctx || !ctx->initialized) {
         return BOOT_FLASH_ERROR_UNINITIALIZED;
     }
@@ -272,13 +288,13 @@ boot_flash_error_t boot_flash_compute_crc32(boot_flash_context_t* ctx,
         return BOOT_FLASH_ERROR_INVALID_PARAM;
     }
 
-    addr = boot_flash_partition_addr(partition);
+    const uint32_t addr = boot_flash_partition_addr(partition);
 
-    BOOT_FLASH_LOG_I( "CRC32: part=%c, addr=0x%08lX, size=%lu",
+    BOOT_FLASH_LOG_I( "CRC32: 分区=%c, 地址=0x%08lX, 大小=%lu",
         (partition == BOOT_PARTITION_A) ? 'A' : 'B',
         (unsigned long)addr, (unsigned long)size);
 
-    ef_port_cache_invalidate();
+    hal_flash_cache_invalidate();
 
     *crc32 = get_CRC32_check_sum((const uint8_t*)addr, size, 0xFFFFFFFFU);
     return BOOT_FLASH_OK;
@@ -287,10 +303,6 @@ boot_flash_error_t boot_flash_compute_crc32(boot_flash_context_t* ctx,
 boot_flash_error_t boot_flash_compute_checksum(boot_flash_context_t* ctx,
     boot_partition_t partition, uint32_t size, uint32_t* checksum)
 {
-    uint32_t addr;
-    uint32_t sum = 0U;
-    uint32_t i;
-
     if (!ctx || !ctx->initialized) {
         return BOOT_FLASH_ERROR_UNINITIALIZED;
     }
@@ -299,22 +311,23 @@ boot_flash_error_t boot_flash_compute_checksum(boot_flash_context_t* ctx,
         return BOOT_FLASH_ERROR_INVALID_PARAM;
     }
 
-    addr = boot_flash_partition_addr(partition);
+    const uint32_t addr = boot_flash_partition_addr(partition);
 
-    BOOT_FLASH_LOG_I( "Checksum: part=%c, addr=0x%08lX, size=%lu",
+    BOOT_FLASH_LOG_I( "累加和: 分区=%c, 地址=0x%08lX, 大小=%lu",
         (partition == BOOT_PARTITION_A) ? 'A' : 'B',
         (unsigned long)addr, (unsigned long)size);
 
-    ef_port_cache_invalidate();
+    hal_flash_cache_invalidate();
 
+    uint32_t sum = 0U;
     {
         const volatile uint8_t* p = (const volatile uint8_t*)addr;
-        for (i = 0U; i < size; i++) {
+        for (uint32_t i = 0U; i < size; i++) {
             sum += p[i];
         }
     }
 
     *checksum = sum;
-    BOOT_FLASH_LOG_I( "Checksum result: 0x%08lX", (unsigned long)sum);
+    BOOT_FLASH_LOG_I( "累加和结果: 0x%08lX", (unsigned long)sum);
     return BOOT_FLASH_OK;
 }

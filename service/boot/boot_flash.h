@@ -3,8 +3,7 @@
  * @brief   Flash 分区管理 — 双 A/B 分区 + Metadata 页
  * @attention
  *
- * 封装 drv_stm32g4_flash，提供分区维度的擦除/写入/校验操作。
- * 所有地址和大小以宏定义，可根据实际 bootloader 大小调整。
+ * 封装 hal_flash，提供分区维度的擦除/写入/校验操作。
  */
 
 #ifndef __BOOT_FLASH_H
@@ -21,10 +20,6 @@ extern "C" {
 #include "ring_storage.h"
 
 /* Exported constants --------------------------------------------------------*/
-
-/** Flash 物理参数 */
-#define BOOT_FLASH_BASE         0x08000000U  /**< Flash 起始地址 */
-#define BOOT_FLASH_TOTAL_SIZE   0x20000U     /**< 128 KB */
 
 /** 分区布局 */
 #define BOOT_FLASH_BOOT_SIZE    0x9000U      /**< Bootloader: 36 KB */
@@ -51,7 +46,8 @@ typedef struct {
     uint16_t version;          /**< 固件版本号 */
     uint32_t fw_size;          /**< 固件大小 */
     uint32_t fw_checksum;      /**< 固件校验和 */
-    uint32_t reserved[2];      /**< 预留 */
+    uint32_t reboot_counts;    /**< MCU 上电启动次数 */
+    uint32_t reserved;         /**< 预留 */
 } boot_metadata_t;
 
 /** Flash 操作错误码 */

@@ -22,18 +22,18 @@ ring_storage/
  0      magic            4B     0x52535446 ("RSTF")
  4      version          4B     单调递增版本号
  8      frame_len        4B     帧总逻辑大小（含头尾）
-12      kv_count         2B     KV 条目数
-14      header_crc16     2B     帧头 CRC16（偏移 0~13）
-16      KV 数据区        N B     [klen(1)][key][vlen(2)][val]...
-16+N   data_crc32       4B     KV 数据区 CRC32
-20+N   commit_magic     4B     0x434F4D54 ("COMT") 原子提交点
+12      kv_count         4B     KV 条目数
+16      header_crc32     4B     帧头 CRC32（偏移 0~15）
+20      KV 数据区        N B     [klen(1)][key][vlen(2)][val]...
+20+N   data_crc32       4B     KV 数据区 CRC32
+24+N   commit_magic     4B     0x434F4D54 ("COMT") 原子提交点
 ----------------------------------------------
-固定开销：24B/帧
+固定开销：28B/帧
 ```
 
 ### 断电保护
 
-- **帧头 CRC16**：防止帧头损坏导致越界读取
+- **帧头 CRC32**：防止帧头损坏导致越界读取
 - **数据 CRC32**：保证 KV 数据完整性
 - **commit_magic**：最后写入的原子提交点，未写入则帧视为不完整
 
@@ -80,7 +80,7 @@ ring_storage_save(&s_storage);  /* 修改后保存 */
 | 特性          | EasyFlash NG      | ring_storage      |
 |---------------|-------------------|-------------------|
 | 模型          | 单 KV 独立存储    | 整包快照存储      |
-| 固定开销      | 48B/ENV（64bit）  | 24B/帧            |
+| 固定开销      | 48B/ENV（64bit）  | 28B/帧            |
 | 查找          | 全扫描/缓存       | O(1) 内存注册表   |
 | GC            | 逐个搬迁 ENV      | 整帧复制          |
 | 断电保护      | PRE_WRITE+WRITE   | commit_magic 单点 |
@@ -88,6 +88,6 @@ ring_storage_save(&s_storage);  /* 修改后保存 */
 
 ## 依赖
 
-- `algorithm/crc.h`：CRC16 校验（帧头）
-- `utils/memory_pool.h`：`__memset`/`__memcpy`/`__strlen` 等
-- `services/debug/debug.h`：日志输出
+- `rs_crc32.h`：CRC32 校验（帧头 + 数据）
+- `ring_storage_port.h`：平台抽象层（read/write/erase/lock）
+- `log.h`：日志输出

@@ -38,7 +38,7 @@ graph LR
     end
 
     subgraph 环形分区["环形分区存储（Ring Storage）"]
-        B1["所有 KV 打包为一帧"] --> B2["头部仅 16B/帧"]
+        B1["所有 KV 打包为一帧"] --> B2["头部仅 20B/帧"]
         B1 --> B3["O(1) 内存索引查找"]
         B1 --> B4["GC 整帧搬迁"]
     end
@@ -93,11 +93,11 @@ graph LR
 ```
 扇区起始
   │
-  ├── 帧 v1 [帧头 16B | KV数据 | 帧尾 8B]
-  ├── 帧 v2 [帧头 16B | KV数据 | 帧尾 8B]
-  ├── 帧 v3 [帧头 16B | KV数据 | 帧尾 8B]
+  ├── 帧 v1 [帧头 20B | KV数据 | 帧尾 8B]
+  ├── 帧 v2 [帧头 20B | KV数据 | 帧尾 8B]
+  ├── 帧 v3 [帧头 20B | KV数据 | 帧尾 8B]
   │   ...
-  ├── 帧 vN [帧头 16B | KV数据 | 帧尾 8B]
+  ├── 帧 vN [帧头 20B | KV数据 | 帧尾 8B]
   └── 0xFF 0xFF 0xFF ...  (空白区域)
 ```
 
@@ -106,18 +106,18 @@ graph LR
 ```
 偏移    字段              大小      说明
 ──────────────────────────────────────────────────────
- 0     magic             4B       0x46524E47 ("FRNG") 帧起始标志
+ 0     magic             4B       0x52535446 ("RSTF") 帧起始标志
  4     version           4B       单调递增版本号
  8     frame_len         4B       帧总长度（含帧头帧尾）
-12     kv_count          2B       KV 条目数量
-14     header_crc16      2B       帧头 CRC16（magic ~ kv_count）
+12     kv_count          4B       KV 条目数量
+16     header_crc32      4B       帧头 CRC32（magic ~ kv_count）
 ──────────────────────────────────────────────────────
-16     KV 数据区         变长      紧凑 TLV 格式
+20     KV 数据区         变长      紧凑 TLV 格式
 ──────────────────────────────────────────────────────
 N     data_crc32        4B       KV 数据区 CRC32
 N+4   commit_magic      4B       0x434F4D54 ("COMT") 原子提交点
 ──────────────────────────────────────────────────────
-      固定开销 = 16B 帧头 + 8B 帧尾 = 24B
+      固定开销 = 20B 帧头 + 8B 帧尾 = 28B
 ```
 
 ### KV 数据区格式（紧凑 TLV）
@@ -134,7 +134,7 @@ N+4   commit_magic      4B       0x434F4D54 ("COMT") 原子提交点
 | 方案 | 头部 | key | value | 对齐填充 | 总计 |
 |------|------|-----|-------|---------|------|
 | EasyFlash (64bit) | 48B | 16B | 8B | - | **72B** |
-| Ring Storage (64bit) | 24B(分摊) | 10B | 1B | 1B(帧对齐) | **~15B** |
+| Ring Storage (64bit) | 28B(分摊) | 10B | 1B | 1B(帧对齐) | **~15B** |
 
 ---
 
@@ -170,7 +170,7 @@ flowchart TD
     D -- 否 --> E["触发 GC"]
     D -- 是 --> F["组装帧到 frame_buffer"]
     E --> F
-    F --> G["计算 CRC16 + CRC32"]
+    F --> G["计算 header_crc32 + data_crc32"]
     G --> H["写入帧体<br/>帧头 + KV数据 + data_crc32"]
     H --> I["写入 commit_magic<br/>（原子提交点）"]
     I --> J{"写入成功?"}
@@ -187,7 +187,7 @@ flowchart TD
     A["ring_storage_load()"] --> B{"有有效帧?"}
     B -- 否 --> C["返回 NO_VALID_FRAME"]
     B -- 是 --> D["读帧头"]
-    D --> E["校验 header_crc16"]
+    D --> E["校验 header_crc32"]
     E --> F{"帧头完整?"}
     F -- 否 --> G["返回 READ_ERR"]
     F -- 是 --> H["读 KV 数据区"]
@@ -225,7 +225,7 @@ flowchart TD
 ```mermaid
 graph TB
     subgraph "帧写入顺序"
-        S1["1. 写帧头<br/>magic + version + len + header_crc16"]
+        S1["1. 写帧头<br/>magic + version + len + kv_count + header_crc32"]
         S2["2. 写 KV 数据区"]
         S3["3. 写 data_crc32"]
         S4["4. 写 commit_magic ← 提交点"]
@@ -233,7 +233,7 @@ graph TB
     end
 
     subgraph "断电恢复判断"
-        R1{"header_crc16 匹配?"}
+        R1{"header_crc32 匹配?"}
         R2{"commit_magic 匹配?"}
         R3{"data_crc32 匹配?"}
         R4["帧有效"]
@@ -252,7 +252,7 @@ graph TB
 | 断电时机 | Flash 状态 | 恢复行为 |
 |---------|-----------|---------|
 | 写帧头中断 | magic 不完整 | magic ≠ 0x46524E47 → 跳过该帧 |
-| 写帧头后、KV 数据中断 | header_crc16 匹配但数据不全 | commit_magic 缺失 → 跳过该帧 |
+| 写帧头后、KV 数据中断 | header_crc32 匹配但数据不全 | commit_magic 缺失 → 跳过该帧 |
 | 写 data_crc32 中断 | data_crc32 不完整 | commit_magic 缺失 → 跳过该帧 |
 | 写 commit_magic 中断 | commit_magic 不完整 | commit_magic ≠ 0x434F4D54 → 跳过该帧 |
 | commit_magic 写入完成 | 帧完整 | 帧有效，正常加载 |
@@ -488,14 +488,14 @@ void ring_storage_port_unlock(void) { __set_BASEPRI(s_saved_basepri); }
 
 ### 空间利用率
 
-**帧大小计算**：`frame_len = 24 (固定开销) + Σ(1 + key_len + 2 + value_len)`
+**帧大小计算**：`frame_len = 28 (固定开销) + Σ(1 + key_len + 2 + value_len)`
 
 以 30 个 FOC 参数（平均 key 10B + value 4B）为例：
 
 | 指标 | 值 |
 |------|-----|
 | KV 数据区 | 30 × (1+10+2+4) = 510B |
-| 帧总大小（含对齐） | 24 + 510 = 534B → 对齐后 536B (64bit) |
+| 帧总大小（含对齐） | 28 + 510 = 538B → 对齐后 544B (64bit) |
 | 8KB Flash (4扇区) 可存帧数 | 3 × 2048 / 536 ≈ **11 帧** |
 | 256KB Flash (2扇区) 可存帧数 | 1 × 131072 / 536 ≈ **244 帧** |
 
@@ -514,11 +514,11 @@ void ring_storage_port_unlock(void) { __set_BASEPRI(s_saved_basepri); }
 
 | 指标 | EasyFlash NG | Ring Storage | 提升 |
 |------|-------------|--------------|------|
-| 30 参数固定开销 | 48B × 30 = 1440B | 24B × 1 = 24B | **60x** |
+| 30 参数固定开销 | 48B × 30 = 1440B | 28B × 1 = 28B | **51x** |
 | 单次修改写入量 | 48B + KV = ~62B | 整帧 ~536B | 0.1x（单次） |
 | 10 次修改总写入 | 620B + GC | 5360B + 1 次 GC | 相当 |
 | 查找速度 | 全扫描/缓存 | O(1) 内存索引 | **10x+** |
-| 代码量 | ~1500 行 | ~600 行 | 0.4x |
+| 代码量 | ~1500 行 | ~700 行 | 0.5x |
 
 > **适用判断**：参数数量 < 100 且总量 < 2KB 时，Ring Storage 空间效率和速度均优于 EasyFlash。参数数量 > 200 或频繁新增/删除不同参数时，EasyFlash 更优。
 
